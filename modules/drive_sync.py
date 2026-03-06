@@ -636,7 +636,7 @@ class DriveSyncOrchestrator:
         Download all brand files in a month group, combine into one DataFrame,
         and run the full DALA pipeline for that calendar month.
         """
-        from .ingestion import load_brand_file
+        from .ingestion import load_brand_file, load_and_clean
 
         year       = group['year']
         month      = group['month']
@@ -646,16 +646,29 @@ class DriveSyncOrchestrator:
         label      = group['month_folder_name']
 
         print(f"  Importing month group: {label} ({start_date} → {end_date})")
-        dfs, file_errors = [], []
+        combined_dfs, brand_dfs, file_errors = [], [], []
         for f in group['files']:
             try:
-                buf        = self.drive.download_file(f['id'])
+                buf = self.drive.download_file(f['id'])
+                # Try standard combined format first (has Brand Partner column)
+                try:
+                    df = load_and_clean(buf)
+                    if not df.empty:
+                        combined_dfs.append(df)
+                    continue
+                except (ValueError, Exception):
+                    pass
+                # Fall back to per-brand wide format
+                buf.seek(0)
                 brand_name = _extract_brand_from_filename(f['name']) or f['name']
-                df         = load_brand_file(buf, brand_name)
+                df = load_brand_file(buf, brand_name)
                 if not df.empty:
-                    dfs.append(df)
+                    brand_dfs.append(df)
             except Exception as e:
                 file_errors.append(f"{f['name']}: {e}")
+
+        # Prefer combined files; use brand files only if no combined file found
+        dfs = combined_dfs if combined_dfs else brand_dfs
 
         if not dfs:
             err = f"No data loaded from {len(group['files'])} files. Sample errors: {'; '.join(file_errors[:3])}"
