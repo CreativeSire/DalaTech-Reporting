@@ -235,6 +235,12 @@
     <span class="text-muted"> — the analysis will flag new and missing brands automatically.</span>
   </div>
   {% endif %}
+  
+  <!-- Tip for historical data -->
+  <div style="margin-top:16px;padding:12px 16px;background:rgba(46,134,193,.08);border:1px solid rgba(46,134,193,.2);border-radius:8px;font-size:12px;">
+    <strong style="color:var(--blue);">💡 Tip:</strong>
+    <span class="text-muted"> For large historical datasets (multiple months), use the <a href="/trends" style="color:var(--navy);font-weight:600;">Trends</a> page instead. It's optimized for historical analysis with MoM growth, maps, and trend visualizations.</span>
+  </div>
 </div>
 
 <!-- ── PANEL 2: ANALYZING ────────────────────────────────────────────────── -->
@@ -459,9 +465,28 @@ async function startAnalysis() {
   fd.append('end_date',   document.getElementById('endDate').value);
 
   try {
-    const res  = await fetch('/api/preview', {method:'POST', body: fd});
-    const data = await res.json();
-    if (!data.success) { alert('Analysis failed: ' + data.error); goToStep(1); return; }
+    const res = await fetch('/api/preview', {method:'POST', body: fd});
+    
+    // Get raw response text first
+    const responseText = await res.text();
+    
+    // Try to parse as JSON
+    let data;
+    try {
+      data = JSON.parse(responseText);
+    } catch (parseErr) {
+      // Not valid JSON - server returned HTML error page
+      console.error('Server response:', responseText.substring(0, 500));
+      alert('Server error: The file may be too large or the server is busy. Try using the Trends page for historical data instead.');
+      goToStep(1);
+      return;
+    }
+    
+    if (!data.success) { 
+      alert('Analysis failed: ' + (data.error || 'Unknown error')); 
+      goToStep(1); 
+      return; 
+    }
     previewData = data;
     // Auto-update dates from detected range
     document.getElementById('startDate').value = data.date_min;
@@ -470,7 +495,7 @@ async function startAnalysis() {
     renderReview(data);
     goToStep(3);
   } catch(err) {
-    alert('Error: ' + err.message);
+    alert('Network error: ' + err.message);
     goToStep(1);
   }
 }
