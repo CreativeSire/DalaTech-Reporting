@@ -69,6 +69,28 @@ def _safe_name(brand_name):
     return brand_name.replace(' ', '_').replace("'", '').replace('/', '-')
 
 
+def _deployment_metadata():
+    """Expose minimal runtime metadata for deployment verification."""
+    return {
+        'git_branch': os.environ.get('RAILWAY_GIT_BRANCH'),
+        'git_commit_sha': os.environ.get('RAILWAY_GIT_COMMIT_SHA'),
+        'git_commit_message': os.environ.get('RAILWAY_GIT_COMMIT_MESSAGE'),
+        'railway_environment': os.environ.get('RAILWAY_ENVIRONMENT_NAME'),
+        'railway_project_id': os.environ.get('RAILWAY_PROJECT_ID'),
+        'railway_service_id': os.environ.get('RAILWAY_SERVICE_ID'),
+    }
+
+
+@app.route('/__version')
+def version():
+    """Lightweight runtime endpoint to confirm what Railway actually deployed."""
+    return jsonify({
+        'service': 'dala-reporting',
+        'timestamp_utc': datetime.utcnow().isoformat() + 'Z',
+        **_deployment_metadata(),
+    })
+
+
 # ── Import page ──────────────────────────────────────────────────────────────
 
 @app.route('/import')
