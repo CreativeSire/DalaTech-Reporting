@@ -310,7 +310,7 @@ def api_preview():
 
 # ── Async generate ────────────────────────────────────────────────────────────
 
-def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, filename):
+def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, filename, report_type=None):
     """Background thread: runs full generation and updates _JOBS[job_id]."""
     job = _JOBS[job_id]
     try:
@@ -349,6 +349,7 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             total_qty=sum(k['total_qty'] for k in all_kpis.values()),
             total_stores=len(all_stores),
             brand_count=len(brands),
+            report_type=report_type,
         )
         job['report_id'] = report_id
 
@@ -434,6 +435,7 @@ def generate_async():
     end_date       = request.form.get('end_date', '').strip()
     selected_raw   = request.form.get('selected_brands', '')
     selected_brands = [b.strip() for b in selected_raw.split(',') if b.strip()] if selected_raw else []
+    report_type    = request.form.get('report_type', '').strip() or None
 
     if not file or not start_date or not end_date:
         return jsonify({'success': False, 'error': 'Missing file or dates'}), 400
@@ -453,7 +455,7 @@ def generate_async():
 
     t = threading.Thread(
         target=_run_generation,
-        args=(job_id, file_bytes, start_date, end_date, selected_brands, file.filename),
+        args=(job_id, file_bytes, start_date, end_date, selected_brands, file.filename, report_type),
         daemon=True,
     )
     t.start()

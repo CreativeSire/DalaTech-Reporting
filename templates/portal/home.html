@@ -84,9 +84,11 @@
     <div class="card-sm">
       <div style="font-weight:600;color:var(--navy);margin-bottom:10px;">Report History</div>
       {% for r in reports[:5] %}
+      {% set rt = r.get('report_type', 'monthly') if r is mapping else 'monthly' %}
       <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--gray);">
         <div>
           <span style="font-weight:600;">{{ r.month_label }}</span>
+          <span class="badge badge-{% if rt=='weekly' %}blue{% elif rt=='quarterly' %}amber{% else %}muted{% endif %}" style="font-size:9px;padding:1px 6px;margin-left:4px;">{{ rt | capitalize }}</span>
           <span class="text-muted fs-sm"> · {{ r.brand_count }} brands</span>
         </div>
         <a href="/dashboard?report_id={{ r.id }}" class="btn btn-outline btn-sm">View</a>

@@ -42,6 +42,7 @@ class DataStore:
                     start_date      TEXT NOT NULL,
                     end_date        TEXT NOT NULL,
                     xls_filename    TEXT,
+                    report_type     TEXT DEFAULT 'monthly',
                     total_revenue   REAL DEFAULT 0,
                     total_qty       REAL DEFAULT 0,
                     total_stores    INTEGER DEFAULT 0,
@@ -165,21 +166,67 @@ class DataStore:
                 CREATE INDEX IF NOT EXISTS idx_activity_log ON activity_log(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_targets_brand ON brand_targets(brand_name);
             """)
+            # ── Schema migration: add report_type to existing databases ──────
+            existing = [r[1] for r in conn.execute("PRAGMA table_info(reports)").fetchall()]
+            if 'report_type' not in existing:
+                conn.execute("ALTER TABLE reports ADD COLUMN report_type TEXT DEFAULT 'monthly'")
+
+    # ── Report type helpers ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _infer_report_type(start_date, end_date, override=None):
+        """Auto-detect report period type from date range, or use explicit override."""
+        if override and override in ('weekly', 'monthly', 'quarterly', 'custom'):
+            return override
+        from datetime import date as _date
+        try:
+            s = datetime.strptime(start_date, '%Y-%m-%d').date()
+            e = datetime.strptime(end_date,   '%Y-%m-%d').date()
+            days = (e - s).days + 1
+            if days <= 7:
+                return 'weekly'
+            if days <= 14:
+                return 'biweekly'
+            if 28 <= days <= 31:
+                return 'monthly'
+            if 85 <= days <= 95:
+                return 'quarterly'
+            return 'custom'
+        except Exception:
+            return 'custom'
+
+    @staticmethod
+    def _build_month_label(start_date, end_date, report_type):
+        """Build a human-readable label appropriate to the report period."""
+        try:
+            s = datetime.strptime(start_date, '%Y-%m-%d')
+            e = datetime.strptime(end_date,   '%Y-%m-%d')
+            if report_type == 'weekly':
+                return f"Week of {s.strftime('%d %b %Y')}"
+            if report_type == 'biweekly':
+                return f"{s.strftime('%d %b')} – {e.strftime('%d %b %Y')}"
+            if report_type == 'quarterly':
+                return f"Q{((s.month - 1) // 3) + 1} {s.year}"
+            return s.strftime('%b %Y')     # monthly / custom
+        except Exception:
+            return start_date
 
     # ── Report operations ─────────────────────────────────────────────────────
 
     def save_report(self, start_date, end_date, xls_filename,
-                    total_revenue, total_qty, total_stores, brand_count):
+                    total_revenue, total_qty, total_stores, brand_count,
+                    report_type=None):
         """Create a report record. Returns the new report_id."""
-        month_label = datetime.strptime(start_date, '%Y-%m-%d').strftime('%b %Y')
+        rt          = self._infer_report_type(start_date, end_date, report_type)
+        month_label = self._build_month_label(start_date, end_date, rt)
         now = datetime.now().isoformat(timespec='seconds')
         with self._connect() as conn:
             cur = conn.execute(
                 """INSERT INTO reports
-                   (month_label, start_date, end_date, xls_filename,
+                   (month_label, start_date, end_date, xls_filename, report_type,
                     total_revenue, total_qty, total_stores, brand_count, generated_at)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
-                (month_label, start_date, end_date, xls_filename,
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (month_label, start_date, end_date, xls_filename, rt,
                  total_revenue, total_qty, total_stores, brand_count, now)
             )
             return cur.lastrowid

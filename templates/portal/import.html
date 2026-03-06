@@ -42,6 +42,15 @@
   .panel { display: none; }
   .panel.active { display: block; }
 
+  /* ── PRESET BUTTONS ──────────────────────────────────────────────────── */
+  .preset-btn {
+    padding: 6px 14px; border-radius: 16px; font-size: 12px; font-weight: 600;
+    cursor: pointer; border: 1.5px solid var(--gray); background: var(--white);
+    color: var(--muted); transition: all .15s;
+  }
+  .preset-btn:hover { border-color: var(--navy); color: var(--navy); }
+  .preset-btn.active { background: var(--navy); color: white; border-color: var(--navy); }
+
   /* ── DROP ZONE ───────────────────────────────────────────────────────── */
   .drop-zone {
     border: 2.5px dashed var(--gray); border-radius: 16px;
@@ -215,15 +224,32 @@
   </div>
   <input type="file" id="fileInput" accept=".xls,.xlsx" onchange="onFileSelect(this)">
 
-  <div style="margin-top:24px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+  <!-- Quick period presets -->
+  <div style="margin-top:20px;margin-bottom:12px;">
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);margin-bottom:8px;">Quick Select Period</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;" id="presetBtns">
+      <button type="button" class="preset-btn" onclick="setPreset('this_week')">This Week</button>
+      <button type="button" class="preset-btn" onclick="setPreset('last_week')">Last Week</button>
+      <button type="button" class="preset-btn" onclick="setPreset('this_month')">This Month</button>
+      <button type="button" class="preset-btn" onclick="setPreset('last_month')">Last Month</button>
+      <button type="button" class="preset-btn" onclick="setPreset('last_3_months')">Last 3 Months</button>
+      <button type="button" class="preset-btn active" onclick="setPreset('custom')">Custom Range</button>
+    </div>
+    <div id="periodTypeBadge" style="margin-top:8px;display:none;">
+      <span id="periodLabel" style="font-size:12px;font-weight:700;padding:3px 10px;border-radius:10px;background:rgba(27,43,94,.08);color:var(--navy);"></span>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
     <div class="form-group" style="margin:0;">
       <label class="form-label">Start Date</label>
-      <input type="date" id="startDate" class="form-control" value="{{ latest.start_date if latest else '2026-02-01' }}">
+      <input type="date" id="startDate" class="form-control" value="{{ latest.start_date if latest else '2026-02-01' }}" onchange="onDateChange()">
     </div>
     <div class="form-group" style="margin:0;">
       <label class="form-label">End Date</label>
-      <input type="date" id="endDate" class="form-control" value="{{ latest.end_date if latest else '2026-02-28' }}">
+      <input type="date" id="endDate" class="form-control" value="{{ latest.end_date if latest else '2026-02-28' }}" onchange="onDateChange()">
     </div>
+    <input type="hidden" id="reportType" value="monthly">
     <div style="flex:1;"></div>
     <button class="btn btn-primary" id="analyzeBtn" onclick="startAnalysis()" disabled>
       🔍 Analyze File
@@ -430,6 +456,67 @@ dropZone.addEventListener('drop',      e => {
 });
 
 function onFileSelect(input) { if (input.files[0]) setFile(input.files[0]); }
+
+// ── Period preset selector ───────────────────────────────────────────────────
+function setPreset(preset) {
+  const today = new Date();
+  const fmt = d => d.toISOString().split('T')[0];
+  let start, end, type = preset;
+
+  if (preset === 'this_week') {
+    const day = today.getDay() || 7; // Mon=1 … Sun=7
+    start = new Date(today); start.setDate(today.getDate() - day + 1);
+    end   = new Date(start); end.setDate(start.getDate() + 6);
+    type  = 'weekly';
+  } else if (preset === 'last_week') {
+    const day = today.getDay() || 7;
+    end   = new Date(today); end.setDate(today.getDate() - day);
+    start = new Date(end);   start.setDate(end.getDate() - 6);
+    type  = 'weekly';
+  } else if (preset === 'this_month') {
+    start = new Date(today.getFullYear(), today.getMonth(), 1);
+    end   = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    type  = 'monthly';
+  } else if (preset === 'last_month') {
+    start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    end   = new Date(today.getFullYear(), today.getMonth(), 0);
+    type  = 'monthly';
+  } else if (preset === 'last_3_months') {
+    start = new Date(today.getFullYear(), today.getMonth() - 3, 1);
+    end   = new Date(today.getFullYear(), today.getMonth(), 0);
+    type  = 'quarterly';
+  } else {
+    // custom — just highlight the button, don't change dates
+    type = 'custom';
+  }
+
+  if (preset !== 'custom') {
+    document.getElementById('startDate').value = fmt(start);
+    document.getElementById('endDate').value   = fmt(end);
+  }
+  document.getElementById('reportType').value = type;
+
+  // Update button styles
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+
+  // Show period label
+  const labels = {
+    weekly: 'Weekly Report', monthly: 'Monthly Report',
+    quarterly: 'Quarterly Report', custom: 'Custom Range', biweekly: '2-Week Report'
+  };
+  const badge = document.getElementById('periodTypeBadge');
+  badge.style.display = 'block';
+  document.getElementById('periodLabel').textContent = labels[type] || type;
+}
+
+function onDateChange() {
+  // When user edits dates manually, switch to custom
+  document.getElementById('reportType').value = 'custom';
+  document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+  const customBtn = document.querySelector('.preset-btn:last-child');
+  if (customBtn) customBtn.classList.add('active');
+}
 
 function setFile(f) {
   selectedFile = f;
@@ -686,6 +773,7 @@ async function startGeneration() {
   fd.append('start_date',       startDate);
   fd.append('end_date',         endDate);
   fd.append('selected_brands',  selectedBrands.join(','));
+  fd.append('report_type',      document.getElementById('reportType').value || 'custom');
 
   const res  = await fetch('/api/generate_async', {method:'POST', body: fd});
   const data = await res.json();
