@@ -22,7 +22,7 @@ Routes:
   GET  /api/reports         JSON list of all reports
 """
 
-import os, io, json, traceback, shutil
+import os, io, json, traceback, shutil, uuid, threading
 from datetime import datetime
 from functools import wraps
 
@@ -30,6 +30,9 @@ from flask import (
     Flask, render_template, request, send_file,
     jsonify, redirect, url_for, abort, session,
 )
+
+# In-memory job tracker for async generation
+_JOBS = {}   # job_id -> {status, progress, total, current_brand, brands_done, errors, report_id}
 
 from modules.ingestion        import load_and_clean, filter_by_date, split_by_brand
 from modules.kpi              import calculate_kpis, calculate_perf_score, generate_narrative
@@ -57,6 +60,373 @@ ds = DataStore()
 
 def _safe_name(brand_name):
     return brand_name.replace(' ', '_').replace("'", '').replace('/', '-')
+
+
+# ── Import page ──────────────────────────────────────────────────────────────
+
+@app.route('/import')
+def import_page():
+    alert_count = ds.get_unacknowledged_count()
+    latest      = ds.get_latest_report()
+    known_brands = set(ds.get_all_brands_in_db())
+    return render_template('portal/import.html',
+                           alert_count=alert_count,
+                           latest=latest,
+                           known_brands=list(known_brands),
+                           reports=ds.get_all_reports())
+
+
+# ── Preview API ───────────────────────────────────────────────────────────────
+
+@app.route('/api/preview', methods=['POST'])
+def api_preview():
+    """
+    Instant file analysis — parses the Tally export and returns a full data
+    profile without generating any reports. Returns JSON in < 3 seconds.
+    """
+    import numpy as np
+
+    file = request.files.get('tally_file')
+    if not file or file.filename == '':
+        return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+
+    try:
+        file_bytes = io.BytesIO(file.read())
+        df = load_and_clean(file_bytes)
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 422
+
+    # ── Basic stats ───────────────────────────────────────────────────────────
+    row_count = len(df)
+    date_min  = df['Date'].min()
+    date_max  = df['Date'].max()
+    file_size_kb = round(file.content_length / 1024, 1) if file.content_length else 0
+
+    # ── Vch type breakdown ────────────────────────────────────────────────────
+    vch_counts = df['Vch Type'].value_counts().to_dict()
+    sales_df = df[df['Vch Type'] == 'Sales']
+
+    # ── Brand analysis ────────────────────────────────────────────────────────
+    known_brands = set(ds.get_all_brands_in_db())
+    brand_stats  = []
+
+    brand_revenue = sales_df.groupby('Brand Partner')['Sales_Value'].sum().sort_values(ascending=False)
+    brand_qty     = sales_df.groupby('Brand Partner')['Quantity'].sum()
+    brand_stores  = sales_df.groupby('Brand Partner')['Particulars'].nunique()
+    brand_skus    = sales_df.groupby('Brand Partner')['SKUs'].nunique()
+    brand_days    = sales_df.groupby('Brand Partner')['Date'].nunique()
+
+    max_rev = float(brand_revenue.max()) if not brand_revenue.empty else 1
+
+    for brand in brand_revenue.index:
+        rev = float(brand_revenue[brand])
+        brand_stats.append({
+            'name':       brand,
+            'revenue':    rev,
+            'revenue_pct': round(rev / max_rev * 100, 1),
+            'qty':        float(brand_qty.get(brand, 0)),
+            'stores':     int(brand_stores.get(brand, 0)),
+            'skus':       int(brand_skus.get(brand, 0)),
+            'days':       int(brand_days.get(brand, 0)),
+            'is_new':     brand not in known_brands,
+        })
+
+    # Brands in df but with no Sales rows
+    all_brands_in_file = set(df['Brand Partner'].unique())
+    active_brands      = set(brand_revenue.index)
+    zero_sales_brands  = sorted(all_brands_in_file - active_brands)
+
+    # Brands in DB but absent from this file
+    missing_brands = sorted(known_brands - all_brands_in_file) if known_brands else []
+
+    # ── Date coverage ─────────────────────────────────────────────────────────
+    if not sales_df.empty:
+        date_range = pd.date_range(date_min, date_max)
+        days_with_data = set(sales_df['Date'].dt.normalize().unique())
+        coverage = []
+        for d in date_range:
+            daily_rev = float(sales_df[sales_df['Date'].dt.normalize() == d]['Sales_Value'].sum())
+            coverage.append({
+                'date':    d.strftime('%b %d'),
+                'weekday': d.strftime('%a'),
+                'has_data': d in days_with_data,
+                'revenue': daily_rev,
+            })
+        days_total  = len(date_range)
+        days_active = len(days_with_data)
+        coverage_pct = round(days_active / days_total * 100) if days_total else 0
+    else:
+        coverage, days_total, days_active, coverage_pct = [], 0, 0, 0
+
+    # ── Top stores + products ─────────────────────────────────────────────────
+    top_stores = (
+        sales_df.groupby('Particulars')['Sales_Value'].sum()
+        .sort_values(ascending=False).head(10)
+    )
+    top_stores_list = [{'name': k, 'revenue': round(float(v), 0)}
+                       for k, v in top_stores.items()]
+
+    top_products = (
+        sales_df.groupby('SKUs')['Sales_Value'].sum()
+        .sort_values(ascending=False).head(10)
+    )
+    top_products_list = [{'name': k, 'revenue': round(float(v), 0)}
+                         for k, v in top_products.items()]
+
+    # ── Data quality score ────────────────────────────────────────────────────
+    issues  = []
+    penalty = 0
+
+    null_dates = int(df['Date'].isna().sum())
+    if null_dates:
+        issues.append({'level': 'warning', 'msg': f'{null_dates} rows with unparseable dates were dropped.'})
+        penalty += 5
+
+    zero_val_rows = int((sales_df['Sales_Value'] == 0).sum())
+    if zero_val_rows > 0:
+        issues.append({'level': 'info', 'msg': f'{zero_val_rows} Sales rows have ₦0 value — may be returns or errors.'})
+        penalty += min(zero_val_rows // 10, 10)
+
+    if zero_sales_brands:
+        issues.append({'level': 'info', 'msg': f'{len(zero_sales_brands)} brand(s) have no Sales transactions: {", ".join(zero_sales_brands[:3])}{"..." if len(zero_sales_brands) > 3 else ""}.'})
+        penalty += 3
+
+    if missing_brands:
+        issues.append({'level': 'warning', 'msg': f'{len(missing_brands)} brand(s) from your history are absent in this file: {", ".join(missing_brands[:3])}{"..." if len(missing_brands) > 3 else ""}.'})
+        penalty += len(missing_brands) * 2
+
+    new_brands = [b for b in brand_stats if b['is_new']]
+    if new_brands:
+        issues.append({'level': 'info', 'msg': f'{len(new_brands)} new brand(s) detected (not in history): {", ".join(b["name"] for b in new_brands[:3])}.'})
+
+    if coverage_pct < 60:
+        issues.append({'level': 'warning', 'msg': f'Only {coverage_pct}% of days in the date range have sales data — check for data gaps.'})
+        penalty += 10
+
+    # Spike detection: any single day revenue > 3x the mean daily
+    if not sales_df.empty:
+        daily_rev = sales_df.groupby('Date')['Sales_Value'].sum()
+        mean_d = daily_rev.mean()
+        std_d  = daily_rev.std()
+        if std_d and std_d > 0:
+            spikes = daily_rev[daily_rev > mean_d + 3 * std_d]
+            if not spikes.empty:
+                issues.append({'level': 'warning', 'msg': f'Revenue spike detected on {spikes.index[0].strftime("%b %d")} (₦{spikes.iloc[0]:,.0f}) — {round(spikes.iloc[0]/mean_d,1)}x the daily average.'})
+
+    quality_score = max(100 - penalty, 40)
+
+    # ── Inventory data presence ───────────────────────────────────────────────
+    has_inventory  = 'Available Inventory' in vch_counts
+    has_pickup     = 'Inventory Pickup by Dala' in vch_counts
+    has_supply     = 'Inventory Supplied by Brands' in vch_counts
+
+    # ── vs last report comparison ─────────────────────────────────────────────
+    vs_last = None
+    latest  = ds.get_latest_report()
+    if latest:
+        total_rev_preview = float(sales_df['Sales_Value'].sum())
+        rev_change = round((total_rev_preview - latest['total_revenue']) / max(latest['total_revenue'], 1) * 100, 1)
+        vs_last = {
+            'month_label': latest['month_label'],
+            'prev_revenue': latest['total_revenue'],
+            'new_revenue':  total_rev_preview,
+            'rev_change':   rev_change,
+            'prev_brands':  latest['brand_count'],
+            'new_brands':   len(brand_stats),
+            'brand_change': len(brand_stats) - latest['brand_count'],
+        }
+
+    return jsonify({
+        'success':        True,
+        'file_name':      file.filename,
+        'row_count':      row_count,
+        'date_min':       date_min.strftime('%Y-%m-%d'),
+        'date_max':       date_max.strftime('%Y-%m-%d'),
+        'date_min_fmt':   date_min.strftime('%d %b %Y'),
+        'date_max_fmt':   date_max.strftime('%d %b %Y'),
+        'brand_count':    len(brand_stats),
+        'brand_stats':    brand_stats,
+        'zero_sales_brands': zero_sales_brands,
+        'missing_brands': missing_brands,
+        'new_brand_count': len(new_brands),
+        'total_stores':   int(sales_df['Particulars'].nunique()),
+        'total_skus':     int(sales_df['SKUs'].nunique()),
+        'total_revenue':  float(sales_df['Sales_Value'].sum()),
+        'total_qty':      float(sales_df['Quantity'].sum()),
+        'vch_counts':     vch_counts,
+        'has_inventory':  has_inventory,
+        'has_pickup':     has_pickup,
+        'has_supply':     has_supply,
+        'coverage':       coverage,
+        'days_total':     days_total,
+        'days_active':    days_active,
+        'coverage_pct':   coverage_pct,
+        'top_stores':     top_stores_list,
+        'top_products':   top_products_list,
+        'quality_score':  quality_score,
+        'issues':         issues,
+        'vs_last':        vs_last,
+    })
+
+
+# ── Async generate ────────────────────────────────────────────────────────────
+
+def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, filename):
+    """Background thread: runs full generation and updates _JOBS[job_id]."""
+    job = _JOBS[job_id]
+    try:
+        df_all    = load_and_clean(io.BytesIO(file_bytes))
+        df_ranged = filter_by_date(df_all, start_date, end_date)
+        brand_data = split_by_brand(df_ranged)
+
+        # Filter to selected brands
+        if selected_brands:
+            brand_data = {b: df for b, df in brand_data.items() if b in selected_brands}
+
+        brands = list(brand_data.keys())
+        job['total'] = len(brands) + 1  # +1 for portfolio
+
+        # Compute all KPIs
+        all_kpis = {}
+        for b in brands:
+            all_kpis[b] = calculate_kpis(brand_data[b])
+
+        total_portfolio_revenue = sum(k['total_revenue'] for k in all_kpis.values())
+        portfolio_avg_revenue   = total_portfolio_revenue / max(len(brands), 1)
+
+        for b in brands:
+            all_kpis[b]['perf_score'] = calculate_perf_score(all_kpis[b], portfolio_avg_revenue)
+
+        # Save report to DB
+        all_stores = set()
+        for k in all_kpis.values():
+            if k.get('top_stores') is not None and not k['top_stores'].empty:
+                all_stores.update(k['top_stores']['Store'].tolist())
+
+        report_id = ds.save_report(
+            start_date=start_date, end_date=end_date,
+            xls_filename=filename,
+            total_revenue=total_portfolio_revenue,
+            total_qty=sum(k['total_qty'] for k in all_kpis.values()),
+            total_stores=len(all_stores),
+            brand_count=len(brands),
+        )
+        job['report_id'] = report_id
+
+        # Save KPIs + alerts
+        for b in brands:
+            k = all_kpis[b]
+            ps = k.get('perf_score', {})
+            share = round(k['total_revenue'] / max(total_portfolio_revenue, 1) * 100, 2)
+            ds.save_brand_kpis(report_id, b, k, ps, share)
+            if not k['daily_sales'].empty:
+                ds.save_daily_sales(report_id, b, k['daily_sales'])
+            history = ds.get_brand_history(b, limit=3)
+            check_and_save_alerts(report_id, b, k, portfolio_avg_revenue, history[1:], ds)
+        run_portfolio_alerts(report_id, ds.get_all_brand_kpis(report_id), ds)
+
+        # Generate per-brand files
+        start_dt  = datetime.strptime(start_date, '%Y-%m-%d')
+        month_tag = start_dt.strftime('%b%Y')
+
+        for i, brand_name in enumerate(brands):
+            job['current_brand'] = brand_name
+            safe      = _safe_name(brand_name)
+            pdf_path  = os.path.join(PDF_DIR,  f"{safe}_Report_{month_tag}.pdf")
+            html_path = os.path.join(HTML_DIR, f"{safe}_Report_{month_tag}.html")
+            kpis      = all_kpis[brand_name]
+
+            brand_result = {'brand': brand_name, 'pdf': False, 'html': False, 'error': None}
+
+            try:
+                generate_pdf_html(output_path=pdf_path, brand_name=brand_name, kpis=kpis,
+                                  start_date=start_date, end_date=end_date,
+                                  portfolio_avg_revenue=portfolio_avg_revenue,
+                                  total_portfolio_revenue=total_portfolio_revenue)
+                brand_result['pdf'] = True
+            except Exception as e:
+                brand_result['error'] = str(e)
+
+            try:
+                generate_html(output_path=html_path, brand_name=brand_name, kpis=kpis,
+                              start_date=start_date, end_date=end_date,
+                              portfolio_avg_revenue=portfolio_avg_revenue,
+                              total_portfolio_revenue=total_portfolio_revenue)
+                brand_result['html'] = True
+            except Exception as e:
+                brand_result['error'] = (brand_result['error'] or '') + ' HTML:' + str(e)
+
+            job['brands_done'].append(brand_result)
+            job['progress'] = round((i + 1) / job['total'] * 100)
+
+        # Portfolio dashboard
+        job['current_brand'] = 'Portfolio Dashboard'
+        portfolio_path = os.path.join(HTML_DIR, f"PORTFOLIO_Dashboard_{month_tag}.html")
+        try:
+            generate_portfolio_html(
+                output_path=portfolio_path,
+                all_brand_kpis=all_kpis,
+                brand_data_raw=brand_data,
+                start_date=start_date,
+                end_date=end_date,
+                total_portfolio_revenue=total_portfolio_revenue,
+            )
+            job['portfolio_file'] = os.path.basename(portfolio_path)
+        except Exception as e:
+            job['errors'].append(f'Portfolio: {e}')
+
+        for b in brands:
+            ds.get_or_create_token(b)
+
+        job['progress'] = 100
+        job['status']   = 'done'
+        job['current_brand'] = None
+
+    except Exception as exc:
+        job['status'] = 'error'
+        job['error_msg'] = str(exc)
+
+
+@app.route('/api/generate_async', methods=['POST'])
+def generate_async():
+    """Start background generation. Returns {job_id} immediately."""
+    file           = request.files.get('tally_file')
+    start_date     = request.form.get('start_date', '').strip()
+    end_date       = request.form.get('end_date', '').strip()
+    selected_raw   = request.form.get('selected_brands', '')
+    selected_brands = [b.strip() for b in selected_raw.split(',') if b.strip()] if selected_raw else []
+
+    if not file or not start_date or not end_date:
+        return jsonify({'success': False, 'error': 'Missing file or dates'}), 400
+
+    file_bytes = file.read()
+    job_id     = uuid.uuid4().hex
+    _JOBS[job_id] = {
+        'status':       'running',
+        'progress':     0,
+        'total':        0,
+        'current_brand': None,
+        'brands_done':  [],
+        'errors':       [],
+        'report_id':    None,
+        'portfolio_file': None,
+    }
+
+    t = threading.Thread(
+        target=_run_generation,
+        args=(job_id, file_bytes, start_date, end_date, selected_brands, file.filename),
+        daemon=True,
+    )
+    t.start()
+    return jsonify({'success': True, 'job_id': job_id})
+
+
+@app.route('/api/generation_status/<job_id>')
+def generation_status(job_id):
+    job = _JOBS.get(job_id)
+    if not job:
+        return jsonify({'success': False, 'error': 'Job not found'}), 404
+    return jsonify({'success': True, **job})
 
 
 # ── Home / Upload ─────────────────────────────────────────────────────────────

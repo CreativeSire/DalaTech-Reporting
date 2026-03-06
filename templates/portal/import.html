@@ -1,0 +1,754 @@
+{% extends "portal/base.html" %}
+{% block title %}Import Data — DALA Analytics{% endblock %}
+{% block page_title %}Import Data{% endblock %}
+
+{% block head %}
+<style>
+  /* ── WIZARD STEPS ────────────────────────────────────────────────────── */
+  .wizard-steps {
+    display: flex; align-items: center; gap: 0;
+    margin-bottom: 28px; background: var(--white);
+    border-radius: 10px; padding: 18px 24px;
+    box-shadow: 0 2px 8px rgba(27,43,94,.07);
+  }
+  .wstep {
+    display: flex; align-items: center; gap: 10px; flex: 1;
+    position: relative;
+  }
+  .wstep:not(:last-child)::after {
+    content: ''; position: absolute; right: 0; top: 50%;
+    transform: translateY(-50%);
+    width: calc(100% - 140px); height: 2px;
+    background: var(--gray); left: 140px;
+    transition: background .4s;
+  }
+  .wstep.done::after { background: var(--green); }
+  .wstep.active::after { background: linear-gradient(90deg, var(--navy), var(--gray)); }
+  .step-num {
+    width: 34px; height: 34px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 800; flex-shrink: 0;
+    transition: all .3s;
+    background: var(--gray); color: var(--muted);
+  }
+  .wstep.active .step-num { background: var(--navy); color: white; }
+  .wstep.done   .step-num { background: var(--green); color: white; }
+  .wstep.error  .step-num { background: var(--red); color: white; }
+  .step-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .wstep.active .step-label { color: var(--navy); }
+  .wstep.done   .step-label { color: var(--green); }
+
+  /* ── PANELS ──────────────────────────────────────────────────────────── */
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ── DROP ZONE ───────────────────────────────────────────────────────── */
+  .drop-zone {
+    border: 2.5px dashed var(--gray); border-radius: 16px;
+    padding: 60px 40px; text-align: center; cursor: pointer;
+    transition: all .25s; background: var(--white);
+  }
+  .drop-zone:hover, .drop-zone.dragover {
+    border-color: var(--navy); background: rgba(27,43,94,.03);
+  }
+  .drop-zone.has-file { border-color: var(--green); background: rgba(30,132,73,.04); }
+  .drop-icon { font-size: 56px; margin-bottom: 16px; }
+  .drop-title { font-size: 20px; font-weight: 700; color: var(--navy); margin-bottom: 8px; }
+  .drop-sub { color: var(--muted); font-size: 13px; }
+  .file-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(30,132,73,.1); color: var(--green);
+    border: 1px solid rgba(30,132,73,.2); border-radius: 8px;
+    padding: 10px 18px; font-weight: 600; font-size: 14px; margin-top: 16px;
+  }
+  #fileInput { display: none; }
+
+  /* ── ANALYSIS LOADER ─────────────────────────────────────────────────── */
+  .analysis-steps {
+    display: flex; flex-direction: column; gap: 12px;
+    max-width: 480px; margin: 32px auto 0;
+  }
+  .astep {
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 16px; border-radius: 8px;
+    background: var(--bg); opacity: 0.4; transition: all .4s;
+  }
+  .astep.running { opacity: 1; background: rgba(27,43,94,.06); }
+  .astep.done    { opacity: 1; background: rgba(30,132,73,.07); }
+  .astep-icon { font-size: 20px; width: 28px; text-align: center; }
+  .astep-label { flex: 1; font-size: 13px; font-weight: 600; }
+  .astep-check { font-size: 16px; }
+  .spinner { width: 18px; height: 18px; border: 2.5px solid rgba(27,43,94,.15);
+             border-top-color: var(--navy); border-radius: 50%;
+             animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── REVIEW PANEL ────────────────────────────────────────────────────── */
+  .review-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .stat-card {
+    background: var(--white); border-radius: 10px; padding: 16px 20px;
+    box-shadow: 0 2px 8px rgba(27,43,94,.07); text-align: center;
+  }
+  .stat-big { font-size: 28px; font-weight: 800; color: var(--navy); line-height: 1; margin: 8px 0 4px; }
+  .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); font-weight: 600; }
+  .stat-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  .quality-ring {
+    width: 80px; height: 80px; border-radius: 50%;
+    border: 7px solid;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 8px;
+  }
+  .quality-val { font-size: 20px; font-weight: 900; }
+
+  /* ── BRAND BARS ──────────────────────────────────────────────────────── */
+  .brand-bar-row {
+    display: flex; align-items: center; gap: 10px; padding: 7px 0;
+    border-bottom: 1px solid var(--gray); font-size: 12px;
+  }
+  .brand-bar-row:last-child { border-bottom: none; }
+  .brand-bar-name { width: 160px; font-weight: 600; flex-shrink: 0;
+                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brand-bar-track { flex: 1; height: 8px; background: #EEF0F5; border-radius: 4px; }
+  .brand-bar-fill  { height: 100%; border-radius: 4px; transition: width .6s cubic-bezier(.4,0,.2,1); }
+  .brand-bar-val   { width: 80px; text-align: right; font-size: 11px; color: var(--muted); flex-shrink: 0; }
+  .new-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+             flex-shrink: 0; title: 'New brand'; }
+
+  /* ── DATE CALENDAR ───────────────────────────────────────────────────── */
+  .cal-grid { display: flex; flex-wrap: wrap; gap: 4px; }
+  .cal-day {
+    width: 28px; height: 28px; border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 600; cursor: default;
+    transition: transform .15s;
+  }
+  .cal-day:hover { transform: scale(1.15); z-index: 1; }
+  .cal-day.empty { background: #EEF0F5; color: var(--muted); }
+  .cal-day.has-data { color: white; }
+  .cal-day.no-data  { background: rgba(232,25,44,.08); color: var(--red); border: 1px solid rgba(232,25,44,.15); }
+
+  /* ── ISSUE ITEMS ─────────────────────────────────────────────────────── */
+  .issue-item { display: flex; gap: 10px; padding: 10px 12px; border-radius: 8px;
+                font-size: 12px; margin-bottom: 6px; }
+  .issue-item.warning { background: rgba(192,146,42,.07); border-left: 3px solid var(--amber); }
+  .issue-item.info    { background: rgba(46,134,193,.07); border-left: 3px solid var(--blue); }
+
+  /* ── CONFIGURE ───────────────────────────────────────────────────────── */
+  .brand-checkbox-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+  .brand-check-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 12px; border-radius: 8px;
+    background: var(--bg); cursor: pointer;
+    border: 1.5px solid transparent; transition: all .15s;
+    font-size: 12px;
+  }
+  .brand-check-item:hover { border-color: var(--navy); }
+  .brand-check-item input[type=checkbox] { accent-color: var(--navy); width: 14px; height: 14px; }
+  .brand-check-item.is-new { border-color: rgba(30,132,73,.3); background: rgba(30,132,73,.05); }
+
+  /* ── PROGRESS ────────────────────────────────────────────────────────── */
+  .gen-brand-row {
+    display: flex; align-items: center; gap: 12px; padding: 8px 0;
+    border-bottom: 1px solid var(--gray); font-size: 12px;
+  }
+  .gen-brand-row:last-child { border-bottom: none; }
+  .gen-brand-name { width: 180px; flex-shrink: 0; font-weight: 600; }
+  .gen-brand-bar-wrap { flex: 1; height: 8px; background: #EEF0F5; border-radius: 4px; overflow: hidden; }
+  .gen-brand-bar { height: 100%; border-radius: 4px; width: 0%; transition: width .5s ease; }
+  .gen-status { width: 60px; text-align: right; font-size: 11px; }
+  .gen-overall { margin-bottom: 20px; }
+  .gen-overall-label { font-size: 12px; font-weight: 600; color: var(--navy); margin-bottom: 6px; display: flex; justify-content: space-between; }
+  .gen-overall-bar { height: 12px; background: #EEF0F5; border-radius: 6px; overflow: hidden; }
+  .gen-overall-fill { height: 100%; background: linear-gradient(90deg, var(--navy), var(--blue)); border-radius: 6px; transition: width .5s ease; }
+  .pulse { animation: pulse 1.5s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.5; } }
+
+  /* ── DONE PANEL ──────────────────────────────────────────────────────── */
+  .done-hero { text-align: center; padding: 32px 0 24px; }
+  .done-tick { font-size: 64px; margin-bottom: 12px; }
+  .done-title { font-size: 26px; font-weight: 800; color: var(--navy); }
+  .done-sub { color: var(--muted); margin-top: 4px; }
+  .output-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0; }
+  .output-card { background: var(--bg); border-radius: 10px; padding: 16px 20px; border: 1.5px solid var(--gray); }
+
+  @media(max-width:900px) {
+    .review-grid { grid-template-columns: 1fr 1fr; }
+    .brand-checkbox-grid { grid-template-columns: 1fr 1fr; }
+    .output-grid { grid-template-columns: 1fr; }
+  }
+  @media(max-width:600px) {
+    .review-grid { grid-template-columns: 1fr; }
+    .brand-checkbox-grid { grid-template-columns: 1fr; }
+    .wstep .step-label { display: none; }
+  }
+</style>
+{% endblock %}
+
+{% block topbar_actions %}
+{% if latest %}
+<span class="text-muted fs-sm">Last import: <strong>{{ latest.month_label }}</strong> · {{ latest.brand_count }} brands</span>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+
+<!-- WIZARD STEPS BAR -->
+<div class="wizard-steps" id="wizardSteps">
+  <div class="wstep active" id="ws1"><div class="step-num">1</div><div class="step-label">Upload File</div></div>
+  <div class="wstep" id="ws2"><div class="step-num">2</div><div class="step-label">Analyzing…</div></div>
+  <div class="wstep" id="ws3"><div class="step-num">3</div><div class="step-label">Review Data</div></div>
+  <div class="wstep" id="ws4"><div class="step-num">4</div><div class="step-label">Configure</div></div>
+  <div class="wstep" id="ws5"><div class="step-num">5</div><div class="step-label">Generating</div></div>
+  <div class="wstep" id="ws6"><div class="step-num">6</div><div class="step-label">Done</div></div>
+</div>
+
+<!-- ── PANEL 1: UPLOAD ───────────────────────────────────────────────────── -->
+<div class="panel active card" id="panel1">
+  <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+    <div class="drop-icon" id="dropIcon">📂</div>
+    <div class="drop-title">Drop your Tally Excel file here</div>
+    <div class="drop-sub">or click to browse &nbsp;·&nbsp; <strong>.xls</strong> or <strong>.xlsx</strong> supported</div>
+    <div id="fileBadge" style="display:none;" class="file-badge">
+      <span>📄</span><span id="fileNameDisplay"></span>
+    </div>
+  </div>
+  <input type="file" id="fileInput" accept=".xls,.xlsx" onchange="onFileSelect(this)">
+
+  <div style="margin-top:24px;display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+    <div class="form-group" style="margin:0;">
+      <label class="form-label">Start Date</label>
+      <input type="date" id="startDate" class="form-control" value="{{ latest.start_date if latest else '2026-02-01' }}">
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label class="form-label">End Date</label>
+      <input type="date" id="endDate" class="form-control" value="{{ latest.end_date if latest else '2026-02-28' }}">
+    </div>
+    <div style="flex:1;"></div>
+    <button class="btn btn-primary" id="analyzeBtn" onclick="startAnalysis()" disabled>
+      🔍 Analyze File
+    </button>
+  </div>
+  {% if known_brands %}
+  <div style="margin-top:16px;padding:12px 16px;background:var(--bg);border-radius:8px;font-size:12px;">
+    <strong style="color:var(--navy);">{{ known_brands|length }} brands in history</strong>
+    <span class="text-muted"> — the analysis will flag new and missing brands automatically.</span>
+  </div>
+  {% endif %}
+</div>
+
+<!-- ── PANEL 2: ANALYZING ────────────────────────────────────────────────── -->
+<div class="panel card" id="panel2" style="text-align:center;padding:40px;">
+  <div style="font-size:40px;margin-bottom:8px;">🧠</div>
+  <h3 style="color:var(--navy);margin-bottom:4px;">Analyzing your data…</h3>
+  <p class="text-muted fs-sm">Running intelligent data profiling</p>
+  <div class="analysis-steps" id="analysisSteps">
+    <div class="astep" id="as1"><div class="astep-icon">📥</div><div class="astep-label">Loading file &amp; detecting format</div><div class="astep-check"></div></div>
+    <div class="astep" id="as2"><div class="astep-icon">🏷️</div><div class="astep-label">Identifying brands and date range</div><div class="astep-check"></div></div>
+    <div class="astep" id="as3"><div class="astep-icon">💰</div><div class="astep-label">Computing revenue distribution</div><div class="astep-check"></div></div>
+    <div class="astep" id="as4"><div class="astep-icon">📅</div><div class="astep-label">Mapping date coverage</div><div class="astep-check"></div></div>
+    <div class="astep" id="as5"><div class="astep-icon">🔬</div><div class="astep-label">Running data quality checks</div><div class="astep-check"></div></div>
+    <div class="astep" id="as6"><div class="astep-icon">📊</div><div class="astep-label">Comparing with previous reports</div><div class="astep-check"></div></div>
+  </div>
+</div>
+
+<!-- ── PANEL 3: REVIEW ───────────────────────────────────────────────────── -->
+<div class="panel" id="panel3">
+
+  <!-- Summary stats -->
+  <div class="review-grid" id="reviewStats"></div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+
+    <!-- Brand Revenue Preview -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h4 style="color:var(--navy);">Brand Revenue Preview</h4>
+        <span class="fs-sm text-muted"><span style="color:var(--green);font-weight:700;">●</span> New brand</span>
+      </div>
+      <div id="brandBars" style="max-height:340px;overflow-y:auto;"></div>
+    </div>
+
+    <!-- Date Coverage Calendar -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h4 style="color:var(--navy);">Date Coverage</h4>
+        <span class="fs-sm" id="coveragePct" style="font-weight:700;color:var(--navy);"></span>
+      </div>
+      <div class="cal-grid" id="calGrid" style="margin-bottom:12px;"></div>
+      <div style="display:flex;gap:16px;font-size:11px;color:var(--muted);">
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--navy);margin-right:4px;"></span>Has data</span>
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(232,25,44,.15);margin-right:4px;"></span>No data</span>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+
+    <!-- Top Stores -->
+    <div class="card">
+      <h4 style="color:var(--navy);margin-bottom:12px;">Top Stores Preview</h4>
+      <div id="topStoresList"></div>
+    </div>
+
+    <!-- Top Products -->
+    <div class="card">
+      <h4 style="color:var(--navy);margin-bottom:12px;">Top Products Preview</h4>
+      <div id="topProductsList"></div>
+    </div>
+
+  </div>
+
+  <!-- Data Quality + Issues + vs Last -->
+  <div style="display:grid;grid-template-columns:200px 1fr 1fr;gap:20px;margin-bottom:20px;">
+
+    <!-- Quality score -->
+    <div class="card" style="text-align:center;">
+      <div class="stat-label" style="margin-bottom:12px;">Data Quality Score</div>
+      <div class="quality-ring" id="qualityRing">
+        <span class="quality-val" id="qualityScore"></span>
+      </div>
+      <div id="qualityLabel" style="font-size:13px;font-weight:700;"></div>
+    </div>
+
+    <!-- Issues -->
+    <div class="card">
+      <h4 style="color:var(--navy);margin-bottom:12px;">Detected Issues</h4>
+      <div id="issuesList"></div>
+    </div>
+
+    <!-- vs last report -->
+    <div class="card" id="vsLastCard">
+      <h4 style="color:var(--navy);margin-bottom:12px;">vs Last Report</h4>
+      <div id="vsLastContent"></div>
+    </div>
+
+  </div>
+
+  <!-- Inventory data presence -->
+  <div class="card" style="margin-bottom:20px;" id="inventoryPresence"></div>
+
+  <div style="display:flex;justify-content:flex-end;gap:12px;">
+    <button class="btn btn-outline" onclick="goToStep(1)">← Back</button>
+    <button class="btn btn-primary" onclick="goToStep(4)">Configure Generation →</button>
+  </div>
+</div>
+
+<!-- ── PANEL 4: CONFIGURE ────────────────────────────────────────────────── -->
+<div class="panel card" id="panel4">
+  <h3 style="color:var(--navy);margin-bottom:4px;">Configure Report Generation</h3>
+  <p class="text-muted fs-sm" style="margin-bottom:20px;">Select which brands to generate reports for, and confirm the date range.</p>
+
+  <div class="grid-2" style="margin-bottom:20px;gap:12px;">
+    <div class="form-group" style="margin:0;">
+      <label class="form-label">Start Date</label>
+      <input type="date" id="configStart" class="form-control">
+    </div>
+    <div class="form-group" style="margin:0;">
+      <label class="form-label">End Date</label>
+      <input type="date" id="configEnd" class="form-control">
+    </div>
+  </div>
+
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h4 style="color:var(--navy);">Brand Partners <span id="selectedCount" style="color:var(--muted);font-size:13px;font-weight:400;"></span></h4>
+    <div style="display:flex;gap:8px;">
+      <button class="btn btn-outline btn-sm" onclick="toggleAll(true)">Select All</button>
+      <button class="btn btn-outline btn-sm" onclick="toggleAll(false)">Deselect All</button>
+    </div>
+  </div>
+  <div class="brand-checkbox-grid" id="brandCheckboxes"></div>
+
+  <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:24px;">
+    <button class="btn btn-outline" onclick="goToStep(3)">← Back</button>
+    <button class="btn btn-primary" id="startGenBtn" onclick="startGeneration()">
+      ⚡ Generate Reports
+    </button>
+  </div>
+</div>
+
+<!-- ── PANEL 5: GENERATING ───────────────────────────────────────────────── -->
+<div class="panel card" id="panel5">
+  <h3 style="color:var(--navy);margin-bottom:4px;">Generating Reports…</h3>
+  <p class="text-muted fs-sm" style="margin-bottom:20px;" id="genSubtitle">Starting up…</p>
+
+  <div class="gen-overall">
+    <div class="gen-overall-label">
+      <span id="overallLabel">Overall Progress</span>
+      <span id="overallPct">0%</span>
+    </div>
+    <div class="gen-overall-bar">
+      <div class="gen-overall-fill" id="overallBar" style="width:0%;"></div>
+    </div>
+  </div>
+
+  <div id="genBrandList"></div>
+</div>
+
+<!-- ── PANEL 6: DONE ─────────────────────────────────────────────────────── -->
+<div class="panel card" id="panel6">
+  <div class="done-hero">
+    <div class="done-tick">🎉</div>
+    <div class="done-title">Reports Ready!</div>
+    <div class="done-sub" id="doneSub"></div>
+  </div>
+
+  <div class="output-grid" id="outputGrid"></div>
+
+  <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:8px;">
+    <a href="/dashboard" class="btn btn-navy">View Dashboard</a>
+    <a href="/brands"    class="btn btn-outline">Browse Brands</a>
+    <a href="/alerts"    class="btn btn-outline">Check Alerts</a>
+    <button class="btn btn-outline" onclick="location.reload()">New Import</button>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let selectedFile  = null;
+let previewData   = null;
+let currentJobId  = null;
+let allBrands     = [];
+
+// ── File selection ──────────────────────────────────────────────────────────
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', ()=> dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop',      e => {
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  const f = e.dataTransfer.files[0];
+  if (f) setFile(f);
+});
+
+function onFileSelect(input) { if (input.files[0]) setFile(input.files[0]); }
+
+function setFile(f) {
+  selectedFile = f;
+  document.getElementById('dropIcon').textContent = '📄';
+  dropZone.classList.add('has-file');
+  document.getElementById('fileBadge').style.display = 'inline-flex';
+  document.getElementById('fileNameDisplay').textContent = f.name + ' (' + (f.size/1024).toFixed(0) + ' KB)';
+  document.getElementById('analyzeBtn').disabled = false;
+}
+
+// ── Step navigation ─────────────────────────────────────────────────────────
+function goToStep(n) {
+  document.querySelectorAll('.panel').forEach((p,i) => {
+    p.classList.toggle('active', i+1 === n);
+  });
+  [1,2,3,4,5,6].forEach(i => {
+    const ws = document.getElementById('ws'+i);
+    ws.classList.remove('active','done','error');
+    if (i < n)  ws.classList.add('done');
+    if (i === n) ws.classList.add('active');
+  });
+}
+
+// ── Analysis ────────────────────────────────────────────────────────────────
+async function startAnalysis() {
+  if (!selectedFile) return;
+  goToStep(2);
+  animateAnalysisSteps();
+
+  const fd = new FormData();
+  fd.append('tally_file', selectedFile);
+  fd.append('start_date', document.getElementById('startDate').value);
+  fd.append('end_date',   document.getElementById('endDate').value);
+
+  try {
+    const res  = await fetch('/api/preview', {method:'POST', body: fd});
+    const data = await res.json();
+    if (!data.success) { alert('Analysis failed: ' + data.error); goToStep(1); return; }
+    previewData = data;
+    // Auto-update dates from detected range
+    document.getElementById('startDate').value = data.date_min;
+    document.getElementById('endDate').value   = data.date_max;
+    await delay(600);
+    renderReview(data);
+    goToStep(3);
+  } catch(err) {
+    alert('Error: ' + err.message);
+    goToStep(1);
+  }
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function animateAnalysisSteps() {
+  const steps = [1,2,3,4,5,6];
+  for (const i of steps) {
+    const el = document.getElementById('as'+i);
+    el.classList.add('running');
+    el.querySelector('.astep-check').innerHTML = '<div class="spinner"></div>';
+    await delay(320);
+    el.classList.remove('running');
+    el.classList.add('done');
+    el.querySelector('.astep-check').textContent = '✅';
+  }
+}
+
+// ── Render Review panel ─────────────────────────────────────────────────────
+function fmtRev(v) { return '₦' + Number(v).toLocaleString('en', {maximumFractionDigits:0}); }
+function fmtK(v)   { return '₦' + (v/1000).toFixed(1) + 'K'; }
+
+function renderReview(d) {
+  // Stat cards
+  const qColor = d.quality_score >= 80 ? '#1E8449' : d.quality_score >= 60 ? '#C0922A' : '#E8192C';
+  const stats = [
+    {v: d.row_count.toLocaleString(),  l:'Total Rows',     s: d.file_name},
+    {v: d.brand_count,                 l:'Active Brands',  s: d.new_brand_count > 0 ? d.new_brand_count + ' new' : 'All known'},
+    {v: fmtRev(d.total_revenue),       l:'Total Revenue',  s: d.days_active + ' trading days'},
+    {v: d.total_stores,                l:'Unique Stores',  s: 'Across all brands'},
+    {v: d.total_skus,                  l:'Unique SKUs',    s: 'Product lines'},
+    {v: d.date_min_fmt + ' – ' + d.date_max_fmt.split(' ').slice(-2).join(' '),
+       l:'Date Range', s: d.days_total + ' calendar days'},
+  ];
+  document.getElementById('reviewStats').innerHTML = stats.map(s => `
+    <div class="stat-card">
+      <div class="stat-label">${s.l}</div>
+      <div class="stat-big">${s.v}</div>
+      <div class="stat-sub">${s.s}</div>
+    </div>`).join('');
+
+  // Brand bars
+  allBrands = d.brand_stats;
+  const maxRev = d.brand_stats[0]?.revenue || 1;
+  document.getElementById('brandBars').innerHTML = d.brand_stats.map((b,i) => `
+    <div class="brand-bar-row">
+      ${b.is_new ? '<div class="new-dot" title="New brand not in history"></div>' : '<div style="width:6px"></div>'}
+      <div class="brand-bar-name" title="${b.name}">${b.name}</div>
+      <div class="brand-bar-track">
+        <div class="brand-bar-fill" style="width:${b.revenue_pct}%;background:${i===0?'#E8192C':'#1B2B5E'};"></div>
+      </div>
+      <div class="brand-bar-val">${fmtK(b.revenue)}</div>
+    </div>`).join('');
+
+  // Calendar
+  const cal = document.getElementById('calGrid');
+  cal.innerHTML = '';
+  const maxDayRev = Math.max(...d.coverage.map(c=>c.revenue), 1);
+  d.coverage.forEach(c => {
+    const div = document.createElement('div');
+    div.className = 'cal-day ' + (c.has_data ? 'has-data' : 'no-data');
+    if (c.has_data) {
+      const intensity = Math.max(0.25, c.revenue / maxDayRev);
+      div.style.background = `rgba(27,43,94,${intensity})`;
+    }
+    div.textContent = c.date.split(' ')[1];
+    div.title = c.date + (c.has_data ? ` — ${fmtRev(c.revenue)}` : ' — No data');
+    cal.appendChild(div);
+  });
+  document.getElementById('coveragePct').textContent = d.coverage_pct + '% days covered';
+
+  // Top stores
+  document.getElementById('topStoresList').innerHTML = d.top_stores.slice(0,8).map((s,i) => `
+    <div class="brand-bar-row">
+      <div style="width:18px;height:18px;border-radius:50%;background:${i===0?'#E8192C':'#EEF0F5'};color:${i===0?'white':'#7A849E'};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0;">${i+1}</div>
+      <div style="flex:1;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${s.name}</div>
+      <div style="font-size:11px;color:var(--muted);flex-shrink:0;">${fmtK(s.revenue)}</div>
+    </div>`).join('');
+
+  // Top products
+  document.getElementById('topProductsList').innerHTML = d.top_products.slice(0,8).map((p,i) => `
+    <div class="brand-bar-row">
+      <div style="width:18px;height:18px;border-radius:50%;background:${i===0?'#2E86C1':'#EEF0F5'};color:${i===0?'white':'#7A849E'};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0;">${i+1}</div>
+      <div style="flex:1;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name}</div>
+      <div style="font-size:11px;color:var(--muted);flex-shrink:0;">${fmtK(p.revenue)}</div>
+    </div>`).join('');
+
+  // Quality
+  const qLabel = d.quality_score >= 80 ? 'Excellent' : d.quality_score >= 60 ? 'Good' : d.quality_score >= 40 ? 'Fair' : 'Poor';
+  document.getElementById('qualityRing').style.borderColor = qColor;
+  document.getElementById('qualityScore').textContent      = d.quality_score;
+  document.getElementById('qualityScore').style.color      = qColor;
+  document.getElementById('qualityLabel').textContent      = qLabel;
+  document.getElementById('qualityLabel').style.color      = qColor;
+
+  // Issues
+  const issEl = document.getElementById('issuesList');
+  issEl.innerHTML = d.issues.length ? d.issues.map(iss => `
+    <div class="issue-item ${iss.level}">
+      <span>${iss.level === 'warning' ? '⚠️' : 'ℹ️'}</span>
+      <span>${iss.msg}</span>
+    </div>`).join('') : '<p class="text-muted fs-sm">No issues detected. Data looks clean.</p>';
+
+  // vs last
+  const vsEl = document.getElementById('vsLastContent');
+  if (d.vs_last) {
+    const v = d.vs_last;
+    const chg = v.rev_change > 0 ? `<span style="color:#1E8449;font-weight:700;">▲ ${v.rev_change}%</span>` :
+                v.rev_change < 0 ? `<span style="color:#E8192C;font-weight:700;">▼ ${Math.abs(v.rev_change)}%</span>` : '→ Flat';
+    vsEl.innerHTML = `
+      <div class="brand-bar-row" style="border:none;"><span class="text-muted">vs</span><strong>&nbsp;${v.month_label}</strong></div>
+      <div class="brand-bar-row"><span class="text-muted">Revenue</span><span>${chg}</span></div>
+      <div class="brand-bar-row"><span class="text-muted">Brands</span><span>${v.new_brands} <small class="text-muted">prev: ${v.prev_brands}</small></span></div>
+      <div class="brand-bar-row" style="border:none;"><span class="text-muted">Total</span><strong>${fmtRev(v.new_revenue)}</strong></div>`;
+  } else {
+    vsEl.innerHTML = '<p class="text-muted fs-sm">No previous reports to compare with — this will be your first entry in history.</p>';
+  }
+
+  // Inventory presence
+  document.getElementById('inventoryPresence').innerHTML = `
+    <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;">
+      <strong style="color:var(--navy);">Data Present:</strong>
+      ${[
+        ['Sales Transactions',        true],
+        ['Available Inventory',       d.has_inventory],
+        ['Inventory Pickup by DALA',  d.has_pickup],
+        ['Inventory Supplied by Brand', d.has_supply],
+      ].map(([label, present]) => `
+        <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;">
+          <span style="color:${present?'#1E8449':'#DDE3ED'};font-size:16px;">${present?'✅':'○'}</span>
+          ${label}
+        </span>`).join('')}
+    </div>`;
+
+  // Pre-fill configure panel
+  renderConfigure(d);
+}
+
+// ── Configure panel ─────────────────────────────────────────────────────────
+function renderConfigure(d) {
+  document.getElementById('configStart').value = d.date_min;
+  document.getElementById('configEnd').value   = d.date_max;
+
+  const container = document.getElementById('brandCheckboxes');
+  container.innerHTML = d.brand_stats.map((b, i) => `
+    <label class="brand-check-item ${b.is_new ? 'is-new' : ''}" onclick="updateSelectedCount()">
+      <input type="checkbox" class="brand-cb" value="${b.name}" checked>
+      <span style="flex:1;">${b.name}</span>
+      ${b.is_new ? '<span style="font-size:9px;background:#1E8449;color:white;padding:1px 6px;border-radius:8px;">NEW</span>' : ''}
+      <span style="font-size:10px;color:var(--muted);">${(b.revenue/1000).toFixed(0)}K</span>
+    </label>`).join('');
+  updateSelectedCount();
+}
+
+function updateSelectedCount() {
+  const total    = document.querySelectorAll('.brand-cb').length;
+  const selected = document.querySelectorAll('.brand-cb:checked').length;
+  document.getElementById('selectedCount').textContent = `(${selected}/${total} selected)`;
+  document.getElementById('startGenBtn').disabled = selected === 0;
+}
+
+function toggleAll(checked) {
+  document.querySelectorAll('.brand-cb').forEach(cb => cb.checked = checked);
+  updateSelectedCount();
+}
+
+// ── Generation ──────────────────────────────────────────────────────────────
+async function startGeneration() {
+  goToStep(5);
+
+  const selectedBrands = [...document.querySelectorAll('.brand-cb:checked')].map(cb => cb.value);
+  const startDate = document.getElementById('configStart').value;
+  const endDate   = document.getElementById('configEnd').value;
+
+  // Build brand list rows in advance
+  const genList = document.getElementById('genBrandList');
+  genList.innerHTML = selectedBrands.map(b => `
+    <div class="gen-brand-row" id="gbr-${CSS.escape(b)}">
+      <div class="gen-brand-name">${b}</div>
+      <div class="gen-brand-bar-wrap"><div class="gen-brand-bar" id="gbb-${CSS.escape(b)}" style="background:var(--gray);"></div></div>
+      <div class="gen-status" id="gbs-${CSS.escape(b)}">Waiting</div>
+    </div>`).join('');
+
+  // Submit
+  const fd = new FormData();
+  fd.append('tally_file',       selectedFile);
+  fd.append('start_date',       startDate);
+  fd.append('end_date',         endDate);
+  fd.append('selected_brands',  selectedBrands.join(','));
+
+  const res  = await fetch('/api/generate_async', {method:'POST', body: fd});
+  const data = await res.json();
+  if (!data.success) { alert('Generation failed: ' + data.error); goToStep(4); return; }
+
+  currentJobId = data.job_id;
+  pollProgress(currentJobId, selectedBrands);
+}
+
+async function pollProgress(jobId, allBrands) {
+  const done = new Set();
+  let currentBrand = null;
+
+  while (true) {
+    await delay(600);
+    let status;
+    try {
+      const r = await fetch('/api/generation_status/' + jobId);
+      status = await r.json();
+    } catch(e) { continue; }
+
+    // Update current brand animation
+    if (status.current_brand && status.current_brand !== currentBrand) {
+      if (currentBrand) finishBrandRow(currentBrand, true);
+      currentBrand = status.current_brand;
+      activateBrandRow(currentBrand);
+    }
+
+    // Mark completed brands
+    status.brands_done.forEach(b => {
+      if (!done.has(b.brand)) {
+        done.add(b.brand);
+        finishBrandRow(b.brand, !b.error);
+      }
+    });
+
+    // Overall progress
+    const pct = status.progress || 0;
+    document.getElementById('overallBar').style.width   = pct + '%';
+    document.getElementById('overallPct').textContent   = pct + '%';
+    document.getElementById('genSubtitle').textContent  =
+      status.current_brand ? 'Generating: ' + status.current_brand : 'Processing…';
+
+    if (status.status === 'done' || status.status === 'error') {
+      if (currentBrand) finishBrandRow(currentBrand, true);
+      await delay(400);
+      renderDone(status);
+      goToStep(6);
+      break;
+    }
+  }
+}
+
+function activateBrandRow(brand) {
+  const bar = document.getElementById('gbb-' + CSS.escape(brand));
+  const lbl = document.getElementById('gbs-' + CSS.escape(brand));
+  if (bar) { bar.style.width = '60%'; bar.style.background = 'var(--navy)'; bar.classList.add('pulse'); }
+  if (lbl) lbl.textContent = '⏳';
+}
+
+function finishBrandRow(brand, success) {
+  const bar = document.getElementById('gbb-' + CSS.escape(brand));
+  const lbl = document.getElementById('gbs-' + CSS.escape(brand));
+  if (bar) { bar.style.width = '100%'; bar.style.background = success ? 'var(--green)' : 'var(--red)'; bar.classList.remove('pulse'); }
+  if (lbl) lbl.textContent = success ? '✅' : '❌';
+}
+
+function renderDone(status) {
+  const done  = status.brands_done || [];
+  const ok    = done.filter(b => !b.error).length;
+  const errs  = done.filter(b =>  b.error).length;
+  document.getElementById('doneSub').textContent =
+    ok + ' brand reports generated' + (errs > 0 ? ` · ${errs} errors` : '') + ' · All data saved to history';
+
+  const grid = document.getElementById('outputGrid');
+  const rows = [
+    {icon:'📄', title:'PDF Reports', sub: ok+'/'+done.length+' generated', link:'/brands', label:'Browse Brands'},
+    {icon:'📊', title:'Interactive HTMLs', sub: ok + ' dashboards ready', link:'/brands', label:'View HTMLs'},
+    {icon:'🌐', title:'Portfolio Dashboard', sub: 'Master view all brands', link: status.portfolio_file ? '/download/html/'+status.portfolio_file : '/dashboard', label:'Open', target:'_blank'},
+    {icon:'🔔', title:'Smart Alerts', sub: 'New alerts generated', link:'/alerts', label:'Review Alerts'},
+  ];
+  grid.innerHTML = rows.map(r => `
+    <div class="output-card">
+      <div style="font-size:28px;margin-bottom:8px;">${r.icon}</div>
+      <div style="font-weight:700;color:var(--navy);margin-bottom:4px;">${r.title}</div>
+      <div class="text-muted fs-sm" style="margin-bottom:12px;">${r.sub}</div>
+      <a href="${r.link}" ${r.target?'target="'+r.target+'"':''} class="btn btn-navy btn-sm">${r.label}</a>
+    </div>`).join('');
+}
+</script>
+{% endblock %}
