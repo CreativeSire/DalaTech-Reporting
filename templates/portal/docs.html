@@ -402,6 +402,33 @@
     <div class="ok-box"><strong>Deploying:</strong> Push code to GitHub and Railway auto-rebuilds in 3–4 minutes. No manual steps.</div>
   </div>
 
+  <!-- BRAND PARTNER PDF FORMAT -->
+  <div class="doc-card">
+    <h2>What the Brand Partner PDF Contains</h2>
+    <div class="subtitle">The 2-page report that gets sent to each brand partner (e.g. Orisirisi, EtiFarms)</div>
+
+    <h3>Page 1 — Dashboard</h3>
+    <ul>
+      <li><strong>Revenue, Units Sold, Store Reach</strong> — the three core KPI cards at the top</li>
+      <li><strong>Daily Sales Trend</strong> — line chart showing revenue movement across the period</li>
+      <li><strong>Top Stores & Top Products</strong> — ranked by revenue with bar charts</li>
+      <li><strong>AI Performance Summary</strong> — a professional paragraph written by Google Gemini specifically for that brand's numbers</li>
+    </ul>
+
+    <h3>Page 2 — Detail & Data Access</h3>
+    <ul>
+      <li><strong>Performance Scorecard</strong> — letter grade (A–F) with 4 sub-scores: Revenue, Loyalty, Reach, Activity</li>
+      <li><strong>Closing Stock Balance</strong> — current inventory levels per SKU</li>
+      <li><strong>Inventory Pickup & Supply tables</strong> — movement during the period</li>
+      <li><strong>Store Order Frequency Heatmap</strong> — which stores ordered most often and when</li>
+      <li><strong>Google Sheets Link</strong> — a button and URL linking to the brand's full raw transaction data in a branded Google Sheet, viewable by anyone with the link</li>
+    </ul>
+
+    <div class="ok-box">
+      <strong>Automatic on every import:</strong> When you import a new report, the system automatically (1) generates the AI narrative, (2) pushes data to Google Sheets, and (3) bakes both into the PDF — no extra steps needed.
+    </div>
+  </div>
+
   <!-- AI NARRATIVE ENGINE -->
   <div class="doc-card">
     <h2>AI-Powered Brand Summaries</h2>
@@ -488,7 +515,9 @@
         <span style="font-size:12px;color:var(--muted);">March 2026 — Current</span>
       </div>
       <ul>
-        <li>AI Narrative Engine — Gemini-powered brand performance summaries generated automatically</li>
+        <li>AI Narrative Engine — Gemini-powered brand performance summaries embedded directly in the PDF</li>
+        <li>Brand partner PDF upgraded: dashboard charts + AI summary + Google Sheets link on every PDF</li>
+        <li>Google Sheets auto-sync — every brand's data pushed to Sheets automatically on import, URL embedded in their PDF</li>
         <li>Portfolio executive summary — board-ready AI paragraph for all brands combined</li>
         <li>WhatsApp Bot — reply to REPORT, ALERTS, BRANDS, HELP via WhatsApp message</li>
         <li>Narrative API endpoints — /api/narrative/[brand] and /api/narrative/portfolio</li>

@@ -37,7 +37,9 @@ jinja_env = Environment(
 def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
                       start_date: str, end_date: str,
                       portfolio_avg_revenue: float = None,
-                      total_portfolio_revenue: float = None) -> str:
+                      total_portfolio_revenue: float = None,
+                      ai_narrative: str = None,
+                      sheets_url: str = None) -> str:
     """
     Generate a 2-page PDF using HTML template + Playwright.
 
@@ -48,6 +50,8 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
         start_date / end_date:   'YYYY-MM-DD'
         portfolio_avg_revenue:   Optional — avg revenue across all brands
         total_portfolio_revenue: Optional — total revenue all brands
+        ai_narrative:            Optional — Gemini AI narrative text (replaces rule-based)
+        sheets_url:              Optional — Google Sheets shareable URL to embed
 
     Returns:
         output_path
@@ -113,8 +117,13 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
         for _, r in kpis['supply_summary'].iterrows()
     ]
 
-    # ── Narrative ──────────────────────────────────────────────────────────────
-    narrative = generate_narrative(brand_name, kpis, start_date, end_date)
+    # ── Narrative — AI (Gemini) takes priority, fallback to rule-based ─────────
+    if ai_narrative:
+        narrative = ai_narrative
+        narrative_source = 'ai'
+    else:
+        narrative = generate_narrative(brand_name, kpis, start_date, end_date)
+        narrative_source = 'rule'
 
     # ── Dates ──────────────────────────────────────────────────────────────────
     start_dt      = datetime.strptime(start_date, '%Y-%m-%d')
@@ -136,6 +145,8 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
         end_date=display_end,
         kpis=kpis,
         narrative=narrative,
+        narrative_source=narrative_source,
+        sheets_url=sheets_url,
         logo_path=logo_data,
         perf=perf,
         portfolio_share=portfolio_share,

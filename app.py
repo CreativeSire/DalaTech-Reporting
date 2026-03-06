@@ -372,6 +372,50 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             check_and_save_alerts(report_id, b, k, portfolio_avg_revenue, history[1:], ds)
         run_portfolio_alerts(report_id, ds.get_all_brand_kpis(report_id), ds)
 
+        # ── Pre-generate AI narratives (batch, before PDFs so they embed in them) ─
+        ai_narratives = {}
+        if gemini_available():
+            _upd(current_brand='Generating AI Narratives...')
+            for b in brands:
+                try:
+                    history = ds.get_brand_history(b, limit=6)
+                    text, _ = generate_brand_narrative(b, all_kpis[b], history, portfolio_avg_revenue)
+                    if text:
+                        ai_narratives[b] = text
+                        ds.save_narrative(report_id, b, text)
+                except Exception:
+                    pass
+            # Portfolio narrative
+            try:
+                report_meta = ds.get_report(report_id)
+                pt = generate_portfolio_narrative(all_kpis, report_meta)
+                if pt:
+                    ds.save_narrative(report_id, '__portfolio__', pt)
+            except Exception:
+                pass
+
+        # ── Pre-push to Google Sheets (auto, before PDFs so URL embeds in them) ──
+        sheets_urls = {}
+        try:
+            from modules.sheets import push_brand_to_sheets, sheets_available
+            if sheets_available():
+                _upd(current_brand='Syncing to Google Sheets...')
+                for b in brands:
+                    try:
+                        url = push_brand_to_sheets(
+                            brand_name=b,
+                            brand_df=brand_data[b],
+                            start_date=start_date,
+                            end_date=end_date,
+                        )
+                        if url:
+                            sheets_urls[b] = url
+                            ds.log_activity('sheets_sync', 'Auto-synced to Google Sheets', b, report_id)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # Generate per-brand files
         start_dt  = datetime.strptime(start_date, '%Y-%m-%d')
         month_tag = start_dt.strftime('%b%Y')
@@ -387,10 +431,14 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             brand_result = {'brand': brand_name, 'pdf': False, 'html': False, 'error': None}
 
             try:
-                generate_pdf_html(output_path=pdf_path, brand_name=brand_name, kpis=kpis,
-                                  start_date=start_date, end_date=end_date,
-                                  portfolio_avg_revenue=portfolio_avg_revenue,
-                                  total_portfolio_revenue=total_portfolio_revenue)
+                generate_pdf_html(
+                    output_path=pdf_path, brand_name=brand_name, kpis=kpis,
+                    start_date=start_date, end_date=end_date,
+                    portfolio_avg_revenue=portfolio_avg_revenue,
+                    total_portfolio_revenue=total_portfolio_revenue,
+                    ai_narrative=ai_narratives.get(brand_name),
+                    sheets_url=sheets_urls.get(brand_name),
+                )
                 brand_result['pdf'] = True
             except Exception as e:
                 brand_result['error'] = str(e)
@@ -429,14 +477,6 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
 
         for b in brands:
             ds.get_or_create_token(b)
-
-        # AI narratives (non-blocking — skipped if Gemini not configured)
-        if gemini_available():
-            _upd(current_brand='AI Narratives')
-            try:
-                generate_bulk_narratives(all_kpis, ds, report_id)
-            except Exception:
-                pass
 
         _upd(progress=100, status='done', current_brand=None,
              portfolio_file=portfolio_filename)
