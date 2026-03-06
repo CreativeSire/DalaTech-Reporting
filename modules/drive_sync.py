@@ -246,8 +246,8 @@ class SyncState:
             row = conn.execute("""
                 SELECT
                     COUNT(*) as total,
-                    SUM(CASE WHEN status='imported' THEN 1 ELSE 0 END) as imported,
-                    SUM(CASE WHEN status='error'    THEN 1 ELSE 0 END) as errors,
+                    COALESCE(SUM(CASE WHEN status='imported' THEN 1 ELSE 0 END), 0) as imported,
+                    COALESCE(SUM(CASE WHEN status='error'    THEN 1 ELSE 0 END), 0) as errors,
                     MAX(imported_at) as last_import
                 FROM drive_sync_files
             """).fetchone()
