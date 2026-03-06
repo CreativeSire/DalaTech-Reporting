@@ -1809,15 +1809,20 @@ def drive_sync_dashboard():
         orch  = DriveSyncOrchestrator()
         stats = orch.get_sync_summary()
         # List files from Drive with their sync status
-        all_files = orch.list_all_files()
+        all_files_raw = orch.list_all_files()
+        # Separate error sentinels from real files
+        folder_errors = {f['folder_id']: f['list_error']
+                         for f in all_files_raw if f.get('list_error')}
+        all_files = [f for f in all_files_raw if not f.get('list_error')]
         # Group by folder for the UI
         folders_data = []
         for folder in DRIVE_FOLDERS:
             folder_files = [f for f in all_files if f['folder_id'] == folder['id']]
             folders_data.append({
-                'name':  folder['name'],
-                'id':    folder['id'],
-                'files': folder_files,
+                'name':        folder['name'],
+                'id':          folder['id'],
+                'files':       folder_files,
+                'list_error':  folder_errors.get(folder['id']),
             })
         return render_template('portal/drive_sync.html',
                                sync_status='active',

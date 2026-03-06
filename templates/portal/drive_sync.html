@@ -104,7 +104,12 @@
        style="font-size:11px;color:var(--blue);margin-left:8px;">Open ↗</a>
   </div>
 
-  {% if folder.files %}
+  {% if folder.list_error %}
+  <div style="background:rgba(232,25,44,.07);border:1px solid rgba(232,25,44,.2);border-radius:8px;padding:12px;margin-bottom:16px;">
+    <p style="font-size:12px;font-weight:700;color:var(--red);margin-bottom:4px;">Could not list files</p>
+    <p style="font-size:11px;font-family:monospace;color:var(--muted);word-break:break-all;">{{ folder.list_error }}</p>
+  </div>
+  {% elif folder.files %}
   <div style="border:1px solid var(--gray);border-radius:8px;overflow:hidden;margin-bottom:16px;">
     {% for f in folder.files %}
     <div class="file-row">
@@ -127,7 +132,7 @@
     {% endfor %}
   </div>
   {% else %}
-  <p class="text-muted fs-sm" style="margin-bottom:16px;">No files found in this folder yet. Make sure the folder is shared with your service account, or that you're signed in via OAuth2.</p>
+  <p class="text-muted fs-sm" style="margin-bottom:16px;">No Excel files found in this folder yet.</p>
   {% endif %}
   {% endfor %}
 </div>

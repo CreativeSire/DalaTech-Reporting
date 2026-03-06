@@ -445,10 +445,20 @@ class DriveSyncOrchestrator:
                         'status':       state.get('status', 'pending'),
                         'imported_at':  state.get('imported_at', ''),
                         'report_id':    state.get('report_id'),
+                        'list_error':   None,
                     })
             except Exception as e:
-                print(f"Could not list {folder['name']}: {e}")
-        return sorted(all_files, key=lambda x: x['name'])
+                err_msg = str(e)
+                print(f"Could not list {folder['name']}: {err_msg}")
+                # Surface error as a sentinel entry so the dashboard can show it
+                all_files.append({
+                    'id':           None,
+                    'name':         None,
+                    'folder':       folder['name'],
+                    'folder_id':    folder['id'],
+                    'list_error':   err_msg,
+                })
+        return sorted([f for f in all_files if f['name']], key=lambda x: x['name'])
 
     def get_sync_summary(self) -> Dict:
         stats = self.state.get_stats()
