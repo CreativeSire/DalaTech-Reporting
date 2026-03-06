@@ -26,6 +26,7 @@ import os, io, json, traceback, shutil, uuid, threading
 from datetime import datetime
 from functools import wraps
 import numpy as np
+import pandas as pd
 
 from flask import (
     Flask, render_template, request, send_file,
@@ -113,8 +114,6 @@ def api_preview():
     Instant file analysis — parses the Tally export and returns a full data
     profile without generating any reports. Returns JSON in < 3 seconds.
     """
-    import numpy as np
-
     file = request.files.get('tally_file')
     if not file or file.filename == '':
         return jsonify({'success': False, 'error': 'No file uploaded'}), 400
@@ -477,8 +476,6 @@ def trends():
     Historical trend analysis dashboard with MoM growth,
     color themes, and insights.
     """
-    import pandas as pd
-
     def render_trends_error(message, available_months=None, year=None, month=None):
         now = datetime.now()
         selected_year = year or now.year
@@ -632,8 +629,6 @@ def how_it_works():
 def admin_retailers():
     """Admin-only view of retailer counts per brand."""
     # In production, add authentication check here
-    import pandas as pd
-    
     hist_path = os.path.join(BASE_DIR, '2024to2026salesreport.xlsx')
     if not os.path.exists(hist_path):
         return render_template('portal/admin_retailers.html',
