@@ -165,6 +165,31 @@ class DataStore:
                 CREATE INDEX IF NOT EXISTS idx_alerts_report ON alerts(report_id);
                 CREATE INDEX IF NOT EXISTS idx_activity_log ON activity_log(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_targets_brand ON brand_targets(brand_name);
+
+                CREATE TABLE IF NOT EXISTS ai_narratives (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    report_id   INTEGER NOT NULL,
+                    brand_name  TEXT NOT NULL,
+                    narrative   TEXT NOT NULL,
+                    created_at  TEXT NOT NULL,
+                    UNIQUE(report_id, brand_name),
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS generation_jobs (
+                    id          TEXT PRIMARY KEY,
+                    status      TEXT DEFAULT 'running',
+                    progress    INTEGER DEFAULT 0,
+                    total       INTEGER DEFAULT 0,
+                    current_brand TEXT,
+                    report_id   INTEGER,
+                    portfolio_file TEXT,
+                    brands_done TEXT DEFAULT '[]',
+                    errors      TEXT DEFAULT '[]',
+                    error_msg   TEXT,
+                    created_at  TEXT NOT NULL,
+                    updated_at  TEXT NOT NULL
+                );
             """)
             # ── Schema migration: add report_type to existing databases ──────
             existing = [r[1] for r in conn.execute("PRAGMA table_info(reports)").fetchall()]
@@ -616,3 +641,84 @@ class DataStore:
             conn.execute(
                 "UPDATE scheduled_reports SET last_run=? WHERE id=?", (now, schedule_id)
             )
+
+    # ── AI Narratives ─────────────────────────────────────────────────────────
+
+    def save_narrative(self, report_id, brand_name, narrative_text):
+        """Cache an AI-generated narrative for a brand in a report."""
+        now = datetime.now().isoformat(timespec='seconds')
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO ai_narratives (report_id, brand_name, narrative, created_at)
+                   VALUES (?,?,?,?)
+                   ON CONFLICT(report_id, brand_name) DO UPDATE SET
+                   narrative=excluded.narrative, created_at=excluded.created_at""",
+                (report_id, brand_name, narrative_text, now)
+            )
+
+    def get_narrative(self, report_id, brand_name):
+        """Return cached AI narrative for a brand, or None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT narrative FROM ai_narratives WHERE report_id=? AND brand_name=?",
+                (report_id, brand_name)
+            ).fetchone()
+            return row['narrative'] if row else None
+
+    def get_all_narratives(self, report_id):
+        """Return all cached narratives for a report as {brand_name: text}."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT brand_name, narrative FROM ai_narratives WHERE report_id=?",
+                (report_id,)
+            ).fetchall()
+            return {r['brand_name']: r['narrative'] for r in rows}
+
+    # ── SQLite-backed Job Tracking ─────────────────────────────────────────────
+
+    def create_job(self, job_id):
+        """Create a new generation job record."""
+        import json as _json
+        now = datetime.now().isoformat(timespec='seconds')
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO generation_jobs
+                   (id, status, progress, total, current_brand, report_id,
+                    portfolio_file, brands_done, errors, error_msg, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (job_id, 'running', 0, 0, None, None, None,
+                 '[]', '[]', None, now, now)
+            )
+
+    def update_job(self, job_id, **kwargs):
+        """Update fields on a generation job."""
+        import json as _json
+        if not kwargs:
+            return
+        now = datetime.now().isoformat(timespec='seconds')
+        # Serialize list/dict fields
+        for key in ('brands_done', 'errors'):
+            if key in kwargs and isinstance(kwargs[key], (list, dict)):
+                kwargs[key] = _json.dumps(kwargs[key])
+        kwargs['updated_at'] = now
+        cols = ', '.join(f"{k}=?" for k in kwargs)
+        vals = list(kwargs.values()) + [job_id]
+        with self._connect() as conn:
+            conn.execute(f"UPDATE generation_jobs SET {cols} WHERE id=?", vals)
+
+    def get_job(self, job_id):
+        """Return a generation job as a dict, or None if not found."""
+        import json as _json
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM generation_jobs WHERE id=?", (job_id,)
+            ).fetchone()
+            if not row:
+                return None
+            job = dict(row)
+            for key in ('brands_done', 'errors'):
+                try:
+                    job[key] = _json.loads(job[key] or '[]')
+                except Exception:
+                    job[key] = []
+            return job

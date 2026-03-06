@@ -402,6 +402,64 @@
     <div class="ok-box"><strong>Deploying:</strong> Push code to GitHub and Railway auto-rebuilds in 3–4 minutes. No manual steps.</div>
   </div>
 
+  <!-- AI NARRATIVE ENGINE -->
+  <div class="doc-card">
+    <h2>AI-Powered Brand Summaries</h2>
+    <div class="subtitle">What the AI does — and what it writes for you</div>
+    <p>After every report is generated, DALA Analytics can automatically write a professional performance summary for each brand partner. These are real sentences — not tables — written by Google Gemini AI, trained on the brand's actual numbers.</p>
+
+    <h3>What gets written?</h3>
+    <p>Each brand gets a 3–4 sentence paragraph that covers:</p>
+    <ul>
+      <li>How revenue compares to last month and the portfolio average</li>
+      <li>Key strengths (e.g. high repeat rate, growing store reach)</li>
+      <li>One area of concern (e.g. low stock cover, declining trend)</li>
+      <li>A clear recommendation for the DALA team</li>
+    </ul>
+
+    <div class="ok-box">
+      <strong>Example output:</strong> "Orisirisi delivered a strong February performance with ₦1.3M in revenue across 14 stores, up 22% month-over-month. Repeat purchase rate of 47% is the highest in the portfolio, indicating excellent store loyalty. However, stock cover has dropped to just 6 days — urgent restocking is recommended before mid-March to avoid a sales gap."
+    </div>
+
+    <h3>How to use it</h3>
+    <ol>
+      <li>Add your <strong>GEMINI_API_KEY</strong> to Railway Variables (get one free at aistudio.google.com)</li>
+      <li>Import a report as normal — narratives generate automatically in the background</li>
+      <li>View narratives on each Brand Detail page or in the brand partner PDF</li>
+      <li>To regenerate: visit <strong>/api/narrative/[Brand Name]?regenerate=1</strong></li>
+    </ol>
+
+    <div class="tip-box">The AI also writes an executive portfolio summary — a single board-ready paragraph covering the entire month's performance across all brands. Access it at <strong>/api/narrative/portfolio</strong>.</div>
+  </div>
+
+  <!-- WHATSAPP BOT -->
+  <div class="doc-card">
+    <h2>WhatsApp Bot</h2>
+    <div class="subtitle">Get live reports by sending a WhatsApp message</div>
+    <p>Anyone on the DALA team can WhatsApp the DALA number and instantly get a report — no need to open a browser or log in.</p>
+
+    <h3>Available commands</h3>
+    <ul>
+      <li><strong>REPORT</strong> — Full portfolio summary (total revenue, brands, top performer)</li>
+      <li><strong>REPORT Orisirisi</strong> — Summary for a specific brand (partial names work)</li>
+      <li><strong>ALERTS</strong> — List of all current unacknowledged alerts</li>
+      <li><strong>BRANDS</strong> — Full list of all active brand partners</li>
+      <li><strong>HELP</strong> — Show the command menu</li>
+    </ul>
+
+    <div class="ok-box">The bot also includes the AI-generated summary for that brand (if AI is configured) at the bottom of the message.</div>
+
+    <h3>How to set up</h3>
+    <ol>
+      <li>Go to your Twilio account → WhatsApp Sandbox (or Business account)</li>
+      <li>Set the "When a message comes in" webhook URL to:<br>
+        <span style="font-family:monospace;font-size:11px;background:var(--bg);padding:2px 8px;border-radius:4px;">https://your-railway-domain.railway.app/webhook/whatsapp</span>
+      </li>
+      <li>Make sure <strong>TWILIO_ACCOUNT_SID</strong>, <strong>TWILIO_AUTH_TOKEN</strong>, and <strong>TWILIO_WHATSAPP_FROM</strong> are in your Railway Variables</li>
+      <li>Save — messages sent to your Twilio WhatsApp number will now be answered automatically</li>
+    </ol>
+  </div>
+
   <!-- REST API -->
   <div class="doc-card">
     <h2>Connecting Other Tools (API)</h2>
@@ -415,6 +473,8 @@
       <li><strong>/api/export/brands</strong> — Download full brand spreadsheet (CSV)</li>
       <li><strong>/api/export/skus</strong> — Download SKU summary (CSV)</li>
       <li><strong>/api/export/alerts</strong> — Download alerts list (CSV)</li>
+      <li><strong>/api/narrative/[Brand Name]</strong> — AI performance narrative for one brand</li>
+      <li><strong>/api/narrative/portfolio</strong> — AI executive summary for whole portfolio</li>
     </ul>
   </div>
 
@@ -424,13 +484,27 @@
 
     <div class="changelog-entry">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-        <span class="version-tag">v3.0</span>
+        <span class="version-tag">v4.0</span>
         <span style="font-size:12px;color:var(--muted);">March 2026 — Current</span>
+      </div>
+      <ul>
+        <li>AI Narrative Engine — Gemini-powered brand performance summaries generated automatically</li>
+        <li>Portfolio executive summary — board-ready AI paragraph for all brands combined</li>
+        <li>WhatsApp Bot — reply to REPORT, ALERTS, BRANDS, HELP via WhatsApp message</li>
+        <li>Narrative API endpoints — /api/narrative/[brand] and /api/narrative/portfolio</li>
+        <li>Job tracking moved to SQLite — generation jobs now survive server restarts and multi-worker deployments</li>
+        <li>AI narratives cached in database — no repeated Gemini API calls for the same report</li>
+      </ul>
+    </div>
+
+    <div class="changelog-entry">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+        <span style="background:var(--blue);color:white;padding:4px 12px;border-radius:12px;font-size:11px;font-weight:700;">v3.0</span>
+        <span style="font-size:12px;color:var(--muted);">March 2026</span>
       </div>
       <ul>
         <li>Weekly / Monthly / Quarterly / Custom report type detection and labels</li>
         <li>Quick Select date presets on Import (This Week, Last Week, This Month, etc.)</li>
-        <li>Report type badges on Home page history list</li>
         <li>Forecasting Dashboard — next-month revenue predictions per brand</li>
         <li>Brand Leaderboard — podium rankings in 4 categories</li>
         <li>SKU Analytics — product-level breakdown with CSV export</li>
@@ -438,10 +512,7 @@
         <li>Alert Rules Builder — custom thresholds on any metric</li>
         <li>REST API v1 — external data access endpoints</li>
         <li>CSV upload for large historical files (50k-row chunked reading)</li>
-        <li>Notification bell in top bar showing unread alert count</li>
-        <li>Google Sheets sync button on brand detail pages</li>
-        <li>Activity log tracking all imports, syncs, and changes</li>
-        <li>How It Works page rewritten in plain language for all users</li>
+        <li>Notification bell and Google Sheets sync</li>
       </ul>
     </div>
 

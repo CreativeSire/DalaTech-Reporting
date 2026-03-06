@@ -33,8 +33,9 @@ from flask import (
     jsonify, redirect, url_for, abort, session,
 )
 
-# In-memory job tracker for async generation
-_JOBS = {}   # job_id -> {status, progress, total, current_brand, brands_done, errors, report_id}
+# Job tracking is persisted to SQLite via DataStore.create_job / update_job / get_job
+# This fixes the multi-worker bug where in-memory dicts don't survive across gunicorn workers.
+_JOBS = {}   # kept for legacy compatibility only — new code uses ds.get_job()
 
 from modules.ingestion        import load_and_clean, filter_by_date, split_by_brand
 from modules.kpi              import calculate_kpis, calculate_perf_score, generate_narrative
@@ -50,6 +51,10 @@ from modules.historical       import (
     get_color_scheme_for_month, get_monthly_metrics
 )
 from modules.geocoding        import is_geocoding_available
+from modules.narrative_ai     import (
+    generate_brand_narrative, generate_portfolio_narrative,
+    generate_bulk_narratives, gemini_available
+)
 
 # ── App config ────────────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -311,8 +316,10 @@ def api_preview():
 # ── Async generate ────────────────────────────────────────────────────────────
 
 def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, filename, report_type=None):
-    """Background thread: runs full generation and updates _JOBS[job_id]."""
-    job = _JOBS[job_id]
+    """Background thread: runs full generation and persists state to SQLite."""
+    def _upd(**kw):
+        ds.update_job(job_id, **kw)
+
     try:
         df_all    = load_and_clean(io.BytesIO(file_bytes))
         df_ranged = filter_by_date(df_all, start_date, end_date)
@@ -323,7 +330,7 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             brand_data = {b: df for b, df in brand_data.items() if b in selected_brands}
 
         brands = list(brand_data.keys())
-        job['total'] = len(brands) + 1  # +1 for portfolio
+        _upd(total=len(brands) + 1)  # +1 for portfolio
 
         # Compute all KPIs
         all_kpis = {}
@@ -351,7 +358,7 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             brand_count=len(brands),
             report_type=report_type,
         )
-        job['report_id'] = report_id
+        _upd(report_id=report_id)
 
         # Save KPIs + alerts
         for b in brands:
@@ -369,8 +376,9 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
         start_dt  = datetime.strptime(start_date, '%Y-%m-%d')
         month_tag = start_dt.strftime('%b%Y')
 
+        brands_done = []
         for i, brand_name in enumerate(brands):
-            job['current_brand'] = brand_name
+            _upd(current_brand=brand_name)
             safe      = _safe_name(brand_name)
             pdf_path  = os.path.join(PDF_DIR,  f"{safe}_Report_{month_tag}.pdf")
             html_path = os.path.join(HTML_DIR, f"{safe}_Report_{month_tag}.html")
@@ -396,12 +404,13 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             except Exception as e:
                 brand_result['error'] = (brand_result['error'] or '') + ' HTML:' + str(e)
 
-            job['brands_done'].append(brand_result)
-            job['progress'] = round((i + 1) / job['total'] * 100)
+            brands_done.append(brand_result)
+            _upd(brands_done=brands_done, progress=round((i + 1) / (len(brands) + 1) * 100))
 
         # Portfolio dashboard
-        job['current_brand'] = 'Portfolio Dashboard'
+        _upd(current_brand='Portfolio Dashboard')
         portfolio_path = os.path.join(HTML_DIR, f"PORTFOLIO_Dashboard_{month_tag}.html")
+        portfolio_filename = None
         try:
             generate_portfolio_html(
                 output_path=portfolio_path,
@@ -411,20 +420,29 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                 end_date=end_date,
                 total_portfolio_revenue=total_portfolio_revenue,
             )
-            job['portfolio_file'] = os.path.basename(portfolio_path)
+            portfolio_filename = os.path.basename(portfolio_path)
         except Exception as e:
-            job['errors'].append(f'Portfolio: {e}')
+            job_obj = ds.get_job(job_id) or {}
+            errs = job_obj.get('errors', [])
+            errs.append(f'Portfolio: {e}')
+            _upd(errors=errs)
 
         for b in brands:
             ds.get_or_create_token(b)
 
-        job['progress'] = 100
-        job['status']   = 'done'
-        job['current_brand'] = None
+        # AI narratives (non-blocking — skipped if Gemini not configured)
+        if gemini_available():
+            _upd(current_brand='AI Narratives')
+            try:
+                generate_bulk_narratives(all_kpis, ds, report_id)
+            except Exception:
+                pass
+
+        _upd(progress=100, status='done', current_brand=None,
+             portfolio_file=portfolio_filename)
 
     except Exception as exc:
-        job['status'] = 'error'
-        job['error_msg'] = str(exc)
+        _upd(status='error', error_msg=str(exc))
 
 
 @app.route('/api/generate_async', methods=['POST'])
@@ -442,16 +460,7 @@ def generate_async():
 
     file_bytes = file.read()
     job_id     = uuid.uuid4().hex
-    _JOBS[job_id] = {
-        'status':       'running',
-        'progress':     0,
-        'total':        0,
-        'current_brand': None,
-        'brands_done':  [],
-        'errors':       [],
-        'report_id':    None,
-        'portfolio_file': None,
-    }
+    ds.create_job(job_id)   # persisted to SQLite — survives worker restarts
 
     t = threading.Thread(
         target=_run_generation,
@@ -464,7 +473,7 @@ def generate_async():
 
 @app.route('/api/generation_status/<job_id>')
 def generation_status(job_id):
-    job = _JOBS.get(job_id)
+    job = ds.get_job(job_id)
     if not job:
         return jsonify({'success': False, 'error': 'Job not found'}), 404
     return jsonify({'success': True, **job})
@@ -1454,6 +1463,225 @@ def api_export_alerts():
 def api_activity():
     limit = min(int(request.args.get('limit', 50)), 200)
     return jsonify(ds.get_activity_log(limit=limit))
+
+
+# ── AI Narrative API ───────────────────────────────────────────────────────────
+
+@app.route('/api/narrative/<path:brand_name>')
+def api_narrative_brand(brand_name):
+    """
+    GET: Return cached AI narrative for a brand (from latest report).
+    POST ?regenerate=1: Force regenerate a fresh narrative from Gemini.
+    """
+    if not gemini_available():
+        return jsonify({'success': False, 'error': 'GEMINI_API_KEY not configured'}), 503
+
+    report = ds.get_latest_report()
+    if not report:
+        return jsonify({'success': False, 'error': 'No report data'}), 404
+
+    report_id  = report['id']
+    regenerate = request.args.get('regenerate') == '1'
+
+    # Try cache first
+    if not regenerate:
+        cached = ds.get_narrative(report_id, brand_name)
+        if cached:
+            return jsonify({'success': True, 'narrative': cached, 'cached': True})
+
+    # Generate fresh
+    kpis = ds.get_brand_kpis_single(report_id, brand_name)
+    if not kpis:
+        return jsonify({'success': False, 'error': 'Brand not found in latest report'}), 404
+
+    total_portfolio_revenue = sum(
+        b['total_revenue'] for b in ds.get_all_brand_kpis(report_id)
+    )
+    portfolio_avg = total_portfolio_revenue / max(
+        len(ds.get_all_brand_kpis(report_id)), 1
+    )
+    history = ds.get_brand_history(brand_name, limit=6)
+
+    try:
+        narrative, _ = generate_brand_narrative(brand_name, kpis, history, portfolio_avg)
+        if narrative:
+            ds.save_narrative(report_id, brand_name, narrative)
+            ds.log_activity('ai_narrative', f'Generated narrative for {brand_name}', brand_name, report_id)
+        return jsonify({'success': True, 'narrative': narrative, 'cached': False})
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+
+@app.route('/api/narrative/portfolio')
+def api_narrative_portfolio():
+    """Return AI executive summary for the entire portfolio."""
+    if not gemini_available():
+        return jsonify({'success': False, 'error': 'GEMINI_API_KEY not configured'}), 503
+
+    report = ds.get_latest_report()
+    if not report:
+        return jsonify({'success': False, 'error': 'No report data'}), 404
+
+    report_id  = report['id']
+    regenerate = request.args.get('regenerate') == '1'
+
+    if not regenerate:
+        cached = ds.get_narrative(report_id, '__portfolio__')
+        if cached:
+            return jsonify({'success': True, 'narrative': cached, 'cached': True})
+
+    all_kpis_rows = ds.get_all_brand_kpis(report_id)
+    all_kpis = {bk['brand_name']: bk for bk in all_kpis_rows}
+
+    try:
+        narrative = generate_portfolio_narrative(all_kpis, report)
+        if narrative:
+            ds.save_narrative(report_id, '__portfolio__', narrative)
+        return jsonify({'success': True, 'narrative': narrative, 'cached': False})
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+
+# ── WhatsApp Conversational Bot ────────────────────────────────────────────────
+
+@app.route('/webhook/whatsapp', methods=['POST'])
+def whatsapp_webhook():
+    """
+    Twilio WhatsApp webhook — conversational bot.
+
+    Commands (case-insensitive):
+      REPORT           → Latest portfolio summary
+      REPORT <brand>   → Brand-specific summary
+      ALERTS           → Unacknowledged alerts count + top 3
+      BRANDS           → List of all active brands
+      HELP             → Command list
+
+    Configure in Twilio Console → WhatsApp Sandbox → When a message comes in:
+    https://your-railway-domain.railway.app/webhook/whatsapp
+    """
+    from urllib.parse import quote
+
+    body    = request.form.get('Body', '').strip()
+    sender  = request.form.get('From', '')
+    cmd     = body.upper().strip()
+
+    def twiml_reply(text):
+        # Sanitize text to avoid XML injection
+        safe = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        return app.response_class(
+            f'<?xml version="1.0" encoding="UTF-8"?>'
+            f'<Response><Message>{safe}</Message></Response>',
+            mimetype='text/xml'
+        )
+
+    report = ds.get_latest_report()
+
+    # ── HELP ──────────────────────────────────────────────────────────────────
+    if cmd in ('HELP', 'HI', 'HELLO', 'START', '?'):
+        return twiml_reply(
+            "DALA Analytics Bot\n\n"
+            "Commands:\n"
+            "• REPORT — Portfolio summary\n"
+            "• REPORT [brand name] — Brand summary\n"
+            "• ALERTS — Active alerts\n"
+            "• BRANDS — All brand partners\n"
+            "• HELP — Show this menu\n\n"
+            f"Latest data: {report['month_label'] if report else 'No data yet'}"
+        )
+
+    # ── ALERTS ────────────────────────────────────────────────────────────────
+    if cmd == 'ALERTS':
+        alerts = ds.get_alerts(unacknowledged_only=True)
+        count = len(alerts)
+        if count == 0:
+            return twiml_reply("No unacknowledged alerts.")
+        lines = [f"Alerts ({count} active):"]
+        for a in alerts[:4]:
+            sev = a.get('severity', '').upper()
+            lines.append(f"[{sev}] {a.get('brand_name','Portfolio')}: {a.get('message','')[:80]}")
+        return twiml_reply('\n'.join(lines))
+
+    # ── BRANDS ────────────────────────────────────────────────────────────────
+    if cmd == 'BRANDS':
+        brands_list = ds.get_all_brands_in_db()
+        if not brands_list:
+            return twiml_reply("No brand data yet. Import a report first.")
+        return twiml_reply(
+            f"Active Brands ({len(brands_list)}):\n" +
+            '\n'.join(f"• {b}" for b in sorted(brands_list)[:20]) +
+            ('\n...and more' if len(brands_list) > 20 else '')
+        )
+
+    # ── REPORT [brand] ────────────────────────────────────────────────────────
+    if cmd.startswith('REPORT'):
+        if not report:
+            return twiml_reply("No report data yet. Please import data first.")
+
+        brand_query = body[6:].strip()  # text after "REPORT"
+
+        if not brand_query:
+            # Portfolio summary
+            kpis_all = ds.get_all_brand_kpis(report['id'])
+            total_rev = sum(b['total_revenue'] for b in kpis_all)
+            brand_count = len(kpis_all)
+            top = max(kpis_all, key=lambda x: x['total_revenue'], default={})
+            alert_count = ds.get_unacknowledged_count()
+
+            lines = [
+                f"DALA Portfolio — {report['month_label']}",
+                f"Revenue: N{total_rev:,.0f}",
+                f"Brands: {brand_count}",
+                f"Top Performer: {top.get('brand_name', '-')} (N{top.get('total_revenue', 0):,.0f})",
+                f"Alerts: {alert_count} unread",
+                f"Type REPORT [brand name] for details.",
+            ]
+            return twiml_reply('\n'.join(lines))
+
+        # Find brand (fuzzy match)
+        all_brands = ds.get_all_brands_in_db()
+        query_lower = brand_query.lower()
+        matched = next(
+            (b for b in all_brands if query_lower in b.lower()), None
+        )
+        if not matched:
+            return twiml_reply(
+                f"Brand '{brand_query}' not found.\n"
+                f"Try: BRANDS to see all brands."
+            )
+
+        kpis = ds.get_brand_kpis_single(report['id'], matched)
+        if not kpis:
+            return twiml_reply(f"{matched} has no data in the latest report.")
+
+        grade  = kpis.get('perf_grade', '-')
+        score  = kpis.get('perf_score', 0)
+        rev    = kpis.get('total_revenue', 0)
+        stores = kpis.get('num_stores', 0)
+        repeat = kpis.get('repeat_pct', 0)
+        stock  = kpis.get('stock_days_cover', 0)
+
+        lines = [
+            f"{matched} — {report['month_label']}",
+            f"Grade: {grade} ({score}/100)",
+            f"Revenue: N{rev:,.0f}",
+            f"Stores: {stores} | Repeat: {repeat:.1f}%",
+            f"Stock Days: {stock:.0f}",
+        ]
+
+        # Attach AI narrative if available
+        if gemini_available():
+            cached_narrative = ds.get_narrative(report['id'], matched)
+            if cached_narrative:
+                # Trim to WhatsApp limit
+                lines.append('')
+                lines.append(cached_narrative[:300] + ('...' if len(cached_narrative) > 300 else ''))
+
+        return twiml_reply('\n'.join(lines))
+
+    # ── Unknown command ────────────────────────────────────────────────────────
+    return twiml_reply(
+        "I didn't understand that. Send HELP for a list of commands."
+    )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
