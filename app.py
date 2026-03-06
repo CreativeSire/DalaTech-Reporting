@@ -421,10 +421,10 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
         month_tag = start_dt.strftime('%b%Y')
 
         def try_generate_pdf(brand_name, pdf_path, kpis, max_retries=2):
-            """Attempt PDF generation with retries."""
+            """Attempt PDF generation with retries. Returns (success, is_pdf, error)."""
             for attempt in range(max_retries):
                 try:
-                    generate_pdf_html(
+                    result_path = generate_pdf_html(
                         output_path=pdf_path, brand_name=brand_name, kpis=kpis,
                         start_date=start_date, end_date=end_date,
                         portfolio_avg_revenue=portfolio_avg_revenue,
@@ -432,14 +432,22 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                         ai_narrative=ai_narratives.get(brand_name),
                         sheets_url=sheets_urls.get(brand_name),
                     )
-                    return True, None
+                    # Check if PDF was actually created or if HTML fallback was used
+                    is_pdf = result_path.endswith('.pdf') and os.path.exists(result_path)
+                    is_html = result_path.endswith('.html') and os.path.exists(result_path)
+                    if is_pdf:
+                        return True, True, None  # success, is_pdf, error
+                    elif is_html:
+                        return True, False, None  # success (HTML fallback), is_pdf=False, error
+                    else:
+                        return False, False, "File not created"
                 except Exception as e:
                     if attempt < max_retries - 1:
                         import time
                         time.sleep(0.5 * (attempt + 1))  # Exponential backoff
                     else:
-                        return False, str(e)
-            return False, "Max retries exceeded"
+                        return False, False, str(e)
+            return False, False, "Max retries exceeded"
 
         def try_generate_html(brand_name, html_path, kpis, max_retries=2):
             """Attempt HTML generation with retries."""
@@ -468,22 +476,23 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
 
             brand_result = {'brand': brand_name, 'pdf': False, 'html': False, 'error': None}
 
-            # Generate PDF with retry
-            pdf_success, pdf_error = try_generate_pdf(brand_name, pdf_path, kpis)
-            brand_result['pdf'] = pdf_success
+            # Generate PDF with retry (may return HTML as fallback)
+            pdf_success, is_actually_pdf, pdf_error = try_generate_pdf(brand_name, pdf_path, kpis)
+            brand_result['pdf'] = pdf_success and is_actually_pdf
+            brand_result['html'] = pdf_success  # If PDF gen succeeded (even HTML fallback), we have an HTML
             if pdf_error:
                 brand_result['error'] = f'PDF: {pdf_error}'
 
-            # Generate HTML with retry
-            html_success, html_error = try_generate_html(brand_name, html_path, kpis)
-            brand_result['html'] = html_success
-            if html_error:
-                brand_result['error'] = (brand_result['error'] or '') + f' HTML: {html_error}'
+            # Only generate separate HTML if PDF generation completely failed
+            if not pdf_success:
+                html_success, html_error = try_generate_html(brand_name, html_path, kpis)
+                brand_result['html'] = html_success
+                if html_error:
+                    brand_result['error'] = (brand_result['error'] or '') + f' HTML: {html_error}'
 
-            # Clear error if at least one succeeded
+            # Clear error if at least one output format succeeded
             if (brand_result['pdf'] or brand_result['html']) and brand_result['error']:
-                # Partial success - log warning but don't show as error
-                brand_result['error'] = None if (brand_result['pdf'] and brand_result['html']) else brand_result['error']
+                brand_result['error'] = None  # Don't show error if we have at least one output
 
             brands_done.append(brand_result)
             _upd(brands_done=brands_done, progress=round((i + 1) / (len(brands) + 1) * 100))

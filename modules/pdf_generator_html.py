@@ -166,16 +166,36 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
     # ── Render to PDF via Playwright ───────────────────────────────────────────
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page    = browser.new_page()
-        page.set_content(html_content, wait_until='networkidle')
-        page.pdf(
-            path=output_path,
-            format='A4',
-            print_background=True,
-            margin={'top': '0mm', 'right': '0mm', 'bottom': '0mm', 'left': '0mm'},
-        )
-        browser.close()
+    # Also save HTML version as fallback
+    html_output_path = output_path.replace('/pdf/', '/html/').replace('.pdf', '.html')
+    os.makedirs(os.path.dirname(html_output_path), exist_ok=True)
+    with open(html_output_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
 
-    return output_path
+    # Try to generate PDF with Playwright
+    try:
+        with sync_playwright() as p:
+            # Try to launch browser - may fail if browsers not installed
+            try:
+                browser = p.chromium.launch()
+            except Exception as launch_err:
+                # Browser not installed - return HTML path as fallback
+                print(f"Playwright browser not available: {launch_err}")
+                print(f"HTML report saved to: {html_output_path}")
+                return html_output_path
+            
+            page = browser.new_page()
+            page.set_content(html_content, wait_until='networkidle')
+            page.pdf(
+                path=output_path,
+                format='A4',
+                print_background=True,
+                margin={'top': '0mm', 'right': '0mm', 'bottom': '0mm', 'left': '0mm'},
+            )
+            browser.close()
+        return output_path
+    except Exception as e:
+        # PDF generation failed - return HTML path as fallback
+        print(f"PDF generation failed: {e}")
+        print(f"HTML report saved to: {html_output_path}")
+        return html_output_path
