@@ -11,6 +11,7 @@ import base64
 import glob
 import shutil
 import subprocess
+import sys
 from datetime import datetime
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -148,6 +149,7 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
 
 def render_pdf_bytes(html_content: str) -> bytes:
     """Render PDF bytes from already-built HTML."""
+    browsers_path = os.getenv('PLAYWRIGHT_BROWSERS_PATH')
     launch_options = {
         'headless': True,
         'args': ['--no-sandbox', '--disable-dev-shm-usage'],
@@ -156,7 +158,7 @@ def render_pdf_bytes(html_content: str) -> bytes:
         browser = None
         try:
             browser = p.chromium.launch(**launch_options)
-        except Exception:
+        except Exception as launch_error:
             shell_candidates = []
             if os.name != 'nt':
                 try:
@@ -197,6 +199,18 @@ def render_pdf_bytes(html_content: str) -> bytes:
                 if candidate and os.path.exists(candidate):
                     browser = p.chromium.launch(executable_path=candidate, **launch_options)
                     break
+            if browser is None and 'playwright install' in str(launch_error).lower():
+                install_env = os.environ.copy()
+                if browsers_path:
+                    install_env['PLAYWRIGHT_BROWSERS_PATH'] = browsers_path
+                    os.makedirs(browsers_path, exist_ok=True)
+                subprocess.run(
+                    [sys.executable, '-m', 'playwright', 'install', 'chromium'],
+                    env=install_env,
+                    timeout=180,
+                    check=False,
+                )
+                browser = p.chromium.launch(**launch_options)
             if browser is None:
                 raise
         page = browser.new_page()
