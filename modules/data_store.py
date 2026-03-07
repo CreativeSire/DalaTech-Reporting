@@ -24,17 +24,28 @@ from datetime import datetime
 _default_db = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dala_data.db')
 DB_PATH = os.environ.get('DATABASE_PATH', _default_db)
 
-# If DATABASE_PATH points to a Volume path that doesn't exist yet, seed it
-# from the bundled dala_data.db committed to the repo. This ensures the first
-# deploy with a fresh Volume starts with full historical data instead of empty.
+# If DATABASE_PATH points to a Volume path that has no data, seed it from the
+# bundled dala_data.db. Handles two cases: file missing (fresh volume) and
+# file present but empty (schema-only from a previous crashed deploy).
 def _seed_volume_db_if_needed():
     if DB_PATH == _default_db:
         return  # not using a volume path, nothing to do
-    if os.path.isfile(DB_PATH):
-        return  # volume already has a database, leave it alone
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    if os.path.isfile(_default_db):
+    if not os.path.isfile(_default_db):
+        return  # no bundled seed to copy from
+
+    needs_seed = not os.path.isfile(DB_PATH)
+    if not needs_seed:
+        try:
+            _c = sqlite3.connect(DB_PATH)
+            count = _c.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
+            _c.close()
+            needs_seed = (count == 0)
+        except Exception:
+            needs_seed = True
+
+    if needs_seed:
         import shutil
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         shutil.copy2(_default_db, DB_PATH)
 
 _seed_volume_db_if_needed()
