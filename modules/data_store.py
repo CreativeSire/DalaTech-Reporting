@@ -530,6 +530,14 @@ class DataStore:
             conn.execute("DELETE FROM daily_sales WHERE report_id=?", (report_id,))
             conn.execute("DELETE FROM brand_detail_json WHERE report_id=?", (report_id,))
             try:
+                conn.execute("DELETE FROM brand_forecast_history WHERE report_id=?", (report_id,))
+            except Exception:
+                pass
+            try:
+                conn.execute("DELETE FROM store_churn WHERE report_id=?", (report_id,))
+            except Exception:
+                pass
+            try:
                 conn.execute("DELETE FROM ai_narratives WHERE report_id=?", (report_id,))
             except Exception:
                 pass  # table may not exist on older DBs
@@ -2004,3 +2012,54 @@ class DataStore:
                 )
             except Exception:
                 pass
+
+    def refresh_report_totals(self, report_id: int):
+        """Recompute stored rollups after admin edits or additive merges."""
+        with self._connect() as conn:
+            report = conn.execute(
+                "SELECT * FROM reports WHERE id=?",
+                (report_id,)
+            ).fetchone()
+            if not report:
+                return None
+
+            brand_rows = conn.execute(
+                "SELECT total_revenue, total_qty, num_stores FROM brand_kpis WHERE report_id=?",
+                (report_id,)
+            ).fetchall()
+            total_revenue = round(sum(float(r['total_revenue'] or 0) for r in brand_rows), 2)
+            total_qty = round(sum(float(r['total_qty'] or 0) for r in brand_rows), 2)
+            brand_count = len(brand_rows)
+
+            # Exact unique-store recomputation is not possible from the stored aggregates alone.
+            # Keep the previous total_stores, but clamp it when the report becomes empty.
+            total_stores = 0 if brand_count == 0 else report['total_stores']
+
+            conn.execute(
+                """UPDATE reports
+                   SET total_revenue=?, total_qty=?, total_stores=?, brand_count=?, generated_at=?
+                   WHERE id=?""",
+                (total_revenue, total_qty, total_stores, brand_count,
+                 datetime.now().isoformat(timespec='seconds'), report_id)
+            )
+            return dict(conn.execute("SELECT * FROM reports WHERE id=?", (report_id,)).fetchone())
+
+    def delete_report(self, report_id: int):
+        """Delete a report and all dependent rows."""
+        report = self.get_report(report_id)
+        if not report:
+            return False
+
+        with self._connect() as conn:
+            for table in ('alerts', 'brand_kpis', 'daily_sales', 'brand_detail_json',
+                          'brand_forecast_history', 'store_churn', 'activity_log'):
+                try:
+                    conn.execute(f"DELETE FROM {table} WHERE report_id=?", (report_id,))
+                except Exception:
+                    pass
+            try:
+                conn.execute("DELETE FROM ai_narratives WHERE report_id=?", (report_id,))
+            except Exception:
+                pass
+            conn.execute("DELETE FROM reports WHERE id=?", (report_id,))
+        return True
