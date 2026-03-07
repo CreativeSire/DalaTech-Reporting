@@ -2016,6 +2016,50 @@ def _build_drive_data():
         }
 
 
+def _get_drive_bootstrap_data():
+    """
+    Cheap Drive tab bootstrap for /database.
+    Avoids live Drive API calls during initial page render.
+    """
+    try:
+        from modules.drive_sync import drive_available, DRIVE_FOLDERS
+        folders = [
+            {
+                'name': folder['name'],
+                'id': folder['id'],
+                'files': [],
+                'list_error': None,
+            }
+            for folder in DRIVE_FOLDERS
+        ]
+        if not drive_available():
+            return {
+                'sync_status': 'no_credentials',
+                'sync_stats': {'total_imports': 0, 'total_errors': 0, 'files_tracked': 0},
+                'folders': folders,
+                'drive_files': [],
+                'drive_error': 'No Google credentials found.',
+                'drive_loaded': False,
+            }
+        return {
+            'sync_status': 'loading',
+            'sync_stats': {'total_imports': 0, 'total_errors': 0, 'files_tracked': 0},
+            'folders': folders,
+            'drive_files': [],
+            'drive_error': None,
+            'drive_loaded': False,
+        }
+    except Exception as e:
+        return {
+            'sync_status': 'error',
+            'sync_stats': {'total_imports': 0, 'total_errors': 0, 'files_tracked': 0},
+            'folders': [],
+            'drive_files': [],
+            'drive_error': str(e),
+            'drive_loaded': False,
+        }
+
+
 @app.route('/database')
 def database_page():
     """Unified database management page — upload, Drive Sync, and Google Sheets tabs."""
@@ -2031,7 +2075,7 @@ def database_page():
     except Exception:
         sheets_auth = None
 
-    drive_data = _build_drive_data()
+    drive_data = _get_drive_bootstrap_data()
 
     return render_template(
         'portal/database.html',
@@ -2042,6 +2086,12 @@ def database_page():
         sheets_auth=sheets_auth,
         **drive_data,
     )
+
+
+@app.route('/api/drive-sync/summary')
+def api_drive_sync_summary():
+    """Load Drive summary lazily so /database doesn't block on Google API calls."""
+    return jsonify(_build_drive_data())
 
 
 # ── DB Import API (upload → pipeline → DB, no PDFs) ────────────────────────────
