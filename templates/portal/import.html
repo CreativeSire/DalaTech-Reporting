@@ -852,7 +852,7 @@ function renderDone(status) {
   const rows = [
     {icon:'📄', title:'PDF Reports', sub: ok+'/'+done.length+' generated', link:'/brands', label:'Browse Brands'},
     {icon:'📊', title:'Interactive HTMLs', sub: ok + ' dashboards ready', link:'/brands', label:'View HTMLs'},
-    {icon:'🌐', title:'Portfolio Dashboard', sub: 'Master view all brands', link: status.portfolio_file ? '/download/html/'+status.portfolio_file : '/dashboard', label:'Open', target:'_blank'},
+    {icon:'🌐', title:'Portfolio Dashboard', sub: 'Master view all brands', link: status.portfolio_dashboard || '/dashboard', label:'Open', target:'_blank'},
     {icon:'🔔', title:'Smart Alerts', sub: 'New alerts generated', link:'/alerts', label:'Review Alerts'},
   ];
   grid.innerHTML = rows.map(r => `

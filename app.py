@@ -30,7 +30,7 @@ import pandas as pd
 
 from flask import (
     Flask, render_template, request, send_file,
-    jsonify, redirect, url_for, abort, session,
+    jsonify, redirect, url_for, abort, session, Response,
 )
 
 # Job tracking is persisted to SQLite via DataStore.create_job / update_job / get_job
@@ -40,7 +40,8 @@ _JOBS = {}   # kept for legacy compatibility only — new code uses ds.get_job()
 from modules.ingestion        import load_and_clean, filter_by_date, split_by_brand
 from modules.kpi              import calculate_kpis, calculate_perf_score, generate_narrative
 from modules.pdf_generator_html import generate_pdf_html
-from modules.html_generator   import generate_html
+from modules.pdf_generator_html import render_pdf_report_html, render_pdf_bytes
+from modules.html_generator   import generate_html, render_html_report
 from modules.portfolio_generator import generate_portfolio_html
 from modules.data_store       import DataStore
 from modules.alerts           import check_and_save_alerts, run_portfolio_alerts
@@ -50,6 +51,7 @@ from modules.historical       import (
     get_repeat_purchase_map_data, generate_insights,
     get_color_scheme_for_month, get_monthly_metrics
 )
+from modules.brand_names      import canonicalize_brand_name
 from modules.geocoding        import is_geocoding_available
 from modules.narrative_ai     import (
     generate_brand_narrative, generate_portfolio_narrative,
@@ -73,6 +75,45 @@ ds = DataStore()
 
 def _safe_name(brand_name):
     return brand_name.replace(' ', '_').replace("'", '').replace('/', '-')
+
+
+def _merge_depletions_by_brand(brand_kpis_rows):
+    """Collapse obvious duplicate brand variants into one depletion summary."""
+    merged = {}
+    for row in brand_kpis_rows or []:
+        brand_name = canonicalize_brand_name(row.get('brand_name', ''))
+        depletion = stock_depletion_date(row)
+        existing = merged.get(brand_name)
+        if not existing or depletion.get('days_remaining', 10**9) < existing.get('days_remaining', 10**9):
+            merged[brand_name] = depletion
+    return merged
+
+
+def _try_backfill_brand_detail_json(report: dict, brand_name: str) -> dict | None:
+    """
+    Rebuild detailed KPI data for older seeded reports when brand_detail_json is missing.
+    Uses the bundled combined workbook if available, then persists the detail JSON.
+    """
+    existing = ds.get_brand_detail_json(report['id'], brand_name)
+    if existing:
+        return existing
+
+    hist_path = os.path.join(BASE_DIR, '2024to2026salesreport.xlsx')
+    if not os.path.isfile(hist_path):
+        return None
+
+    try:
+        combined_df = load_and_clean(hist_path)
+        df_filtered = filter_by_date(combined_df, report['start_date'], report['end_date'])
+        brand_data = split_by_brand(df_filtered)
+        brand_df = brand_data.get(brand_name)
+        if brand_df is None or brand_df.empty:
+            return None
+        detail_kpis = calculate_kpis(brand_df)
+        ds.save_brand_detail_json(report['id'], brand_name, detail_kpis)
+        return ds.get_brand_detail_json(report['id'], brand_name)
+    except Exception:
+        return None
 
 
 def _deployment_metadata():
@@ -377,6 +418,7 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             ps = k.get('perf_score', {})
             share = round(k['total_revenue'] / max(total_portfolio_revenue, 1) * 100, 2)
             ds.save_brand_kpis(report_id, b, k, ps, share)
+            ds.save_brand_detail_json(report_id, b, k)
             if not k['daily_sales'].empty:
                 ds.save_daily_sales(report_id, b, k['daily_sales'])
             history = ds.get_brand_history(b, limit=3)
@@ -861,6 +903,7 @@ def generate():
 
         # Save to DB
         ds.save_brand_kpis(report_id, brand_name, kpis, perf, portfolio_share)
+        ds.save_brand_detail_json(report_id, brand_name, kpis)
         if not kpis['daily_sales'].empty:
             ds.save_daily_sales(report_id, brand_name, kpis['daily_sales'])
 
@@ -1002,7 +1045,8 @@ def brand_detail(brand_name):
     hist_oldest = list(reversed(history))
 
     # Forecast
-    forecast = build_brand_forecasts({brand_name: hist_oldest}).get(brand_name, {})
+    canonical_brand = canonicalize_brand_name(brand_name)
+    forecast = build_brand_forecasts({brand_name: hist_oldest}).get(canonical_brand, {})
 
     # Daily sales
     daily = ds.get_daily_sales(report_id, brand_name) if report_id else []
@@ -1110,7 +1154,7 @@ def brand_portal(token):
     kpis    = ds.get_brand_kpis_single(report_id, brand_name) if report_id else None
     history = ds.get_brand_history(brand_name, limit=12)
     hist_oldest = list(reversed(history))
-    forecast = build_brand_forecasts({brand_name: hist_oldest}).get(brand_name, {})
+    forecast = build_brand_forecasts({brand_name: hist_oldest}).get(canonicalize_brand_name(brand_name), {})
     daily   = ds.get_daily_sales(report_id, brand_name) if report_id else []
 
     # PDF link
@@ -1231,15 +1275,15 @@ def download_html(filename):
 def _reconstruct_kpis_from_db(report_id: int, brand_name: str) -> dict:
     """
     Reconstruct a kpis dict from stored DB data for PDF/HTML generation.
-    daily_sales trend chart renders from the stored daily_sales table.
-    Sections not stored in DB (inventory, top-stores breakdown, SKUs) will be empty
-    but the chart functions handle empty DataFrames gracefully.
+    Loads detailed DataFrames from brand_detail_json table when available.
     """
+    import json as _json
+
     bk = ds.get_brand_kpis_single(report_id, brand_name)
     if not bk:
         return None
 
-    # Rebuild daily_sales DataFrame with the columns expected by chart_dual_trend
+    # Rebuild daily_sales DataFrame
     daily_rows = ds.get_daily_sales(report_id, brand_name)
     if daily_rows:
         daily_df = pd.DataFrame(daily_rows)[['date', 'revenue', 'qty']]
@@ -1248,12 +1292,64 @@ def _reconstruct_kpis_from_db(report_id: int, brand_name: str) -> dict:
     else:
         daily_df = pd.DataFrame(columns=['Date', 'Revenue', 'Quantity'])
 
+    # Load detailed DataFrames from JSON store
+    def _load_df(json_str, columns):
+        try:
+            if json_str and json_str != '[]':
+                records = _json.loads(json_str)
+                if records:
+                    return pd.DataFrame(records)
+        except Exception:
+            pass
+        return pd.DataFrame(columns=columns)
+
+    detail = ds.get_brand_detail_json(report_id, brand_name)
+    if not detail:
+        report = ds.get_report(report_id)
+        if report:
+            detail = _try_backfill_brand_detail_json(report, brand_name)
+    detail = detail or {}
+
+    top_stores_df    = _load_df(detail.get('top_stores_json'),    ['Store', 'Revenue'])
+    product_value_df = _load_df(detail.get('product_value_json'), ['SKU', 'Revenue'])
+    product_qty_df   = _load_df(detail.get('product_qty_json'),   ['SKU', 'Quantity'])
+    closing_stock_df = _load_df(detail.get('closing_stock_json'), ['SKU', 'Closing Stock (Cartons)'])
+    pickup_df        = _load_df(detail.get('pickup_json'),        ['SKU', 'Qty Picked Up', 'Value'])
+    supply_df        = _load_df(detail.get('supply_json'),        ['SKU', 'Qty Supplied', 'Value'])
+    reorder_df       = _load_df(detail.get('reorder_json'),       [])
+    heatmap_df       = _load_df(detail.get('heatmap_json'),       ['Store', 'Date', 'Orders'])
+
+    # Derive top SKU from product_qty
+    top_sku     = product_qty_df.iloc[0]['SKU']     if not product_qty_df.empty else '—'
+    top_sku_qty = product_qty_df.iloc[0]['Quantity'] if not product_qty_df.empty else 0
+    peak_date = bk.get('peak_date')
+    peak_qty = 0
+    if peak_date:
+        try:
+            peak_date = pd.to_datetime(peak_date)
+            if pd.isna(peak_date):
+                peak_date = None
+        except Exception:
+            peak_date = None
+    if not daily_df.empty:
+        try:
+            peak_row = daily_df.loc[daily_df['Revenue'].idxmax()]
+            if peak_date is None:
+                peak_date = peak_row['Date']
+            peak_qty = float(peak_row.get('Quantity', 0) or 0)
+        except Exception:
+            peak_qty = 0
+
+    # Top-store percentage
+    total_rev    = bk.get('total_revenue', 0) or 1
+    top_store_pct = round(bk.get('top_store_revenue', 0) / total_rev * 100, 1)
+
     status    = bk.get('inv_health_status') or 'No Stock Data'
     color_map = {'Healthy Stock': 'green', 'Low Stock': 'amber', 'Overstocked': 'blue'}
     inv_color = color_map.get(status, 'gray')
 
     return {
-        # Scalars from brand_kpis table
+        # Scalars
         'total_revenue':         bk.get('total_revenue', 0),
         'total_qty':             bk.get('total_qty', 0),
         'num_stores':            bk.get('num_stores', 0),
@@ -1268,30 +1364,30 @@ def _reconstruct_kpis_from_db(report_id: int, brand_name: str) -> dict:
         'stock_days_cover':      bk.get('stock_days_cover', 0),
         'inv_health_status':     status,
         'inv_health_color':      inv_color,
-        'peak_date':             bk.get('peak_date'),
+        'peak_date':             peak_date,
         'peak_revenue':          bk.get('peak_revenue', 0),
+        'peak_qty':              peak_qty,
         'top_store_name':        bk.get('top_store_name') or '—',
         'top_store_revenue':     bk.get('top_store_revenue', 0),
-        'top_store_pct':         0,
+        'top_store_pct':         top_store_pct,
         'wow_rev_change':        bk.get('wow_rev_change', 0),
         'wow_qty_change':        bk.get('wow_qty_change', 0),
-        # Placeholders for fields needed by generate_narrative (not stored in DB)
-        'top_sku':               '—',
-        'top_sku_qty':           0,
+        'top_sku':               top_sku,
+        'top_sku_qty':           top_sku_qty,
+        'total_pickup_qty':      pickup_df['Qty Picked Up'].sum()  if not pickup_df.empty else 0,
+        'total_pickup_value':    pickup_df['Value'].sum()          if not pickup_df.empty else 0,
+        'total_supplied_qty':    supply_df['Qty Supplied'].sum()   if not supply_df.empty else 0,
+        'total_supplied_value':  supply_df['Value'].sum()          if not supply_df.empty else 0,
         # DataFrames
         'daily_sales':           daily_df,
-        'top_stores':            pd.DataFrame(columns=['Store', 'Revenue']),
-        'product_qty':           pd.DataFrame(columns=['SKU', 'Quantity']),
-        'product_value':         pd.DataFrame(columns=['SKU', 'Revenue']),
-        'closing_stock':         pd.DataFrame(columns=['SKU', 'Closing Stock (Cartons)']),
-        'reorder_analysis':      pd.DataFrame(),
-        'store_heatmap_df':      pd.DataFrame(columns=['Store', 'Date', 'Orders']),
-        'pickup_summary':        pd.DataFrame(columns=['SKU', 'Qty Picked Up', 'Value']),
-        'supply_summary':        pd.DataFrame(columns=['SKU', 'Qty Supplied', 'Value']),
-        'total_pickup_qty':      0,
-        'total_pickup_value':    0,
-        'total_supplied_qty':    0,
-        'total_supplied_value':  0,
+        'top_stores':            top_stores_df,
+        'product_qty':           product_qty_df,
+        'product_value':         product_value_df,
+        'closing_stock':         closing_stock_df,
+        'reorder_analysis':      reorder_df,
+        'store_heatmap_df':      heatmap_df,
+        'pickup_summary':        pickup_df,
+        'supply_summary':        supply_df,
     }
 
 
@@ -1320,13 +1416,12 @@ def api_report_pdf(report_id, brand_name):
     total_portfolio = sum(b['total_revenue'] for b in all_bk)
     avg_portfolio   = total_portfolio / max(len(all_bk), 1)
 
-    safe   = _safe_name(brand_name)
-    fname  = f"{safe}_Report_{report['start_date']}_{report['end_date']}.pdf"
-    out_path = os.path.join(PDF_DIR, fname)
+    safe = _safe_name(brand_name)
+    month_tag = datetime.strptime(report['start_date'], '%Y-%m-%d').strftime('%b%Y')
+    fname = f"{safe}_Report_{month_tag}.pdf"
 
     try:
-        generate_pdf_html(
-            output_path=out_path,
+        html_content = render_pdf_report_html(
             brand_name=brand_name,
             kpis=kpis,
             start_date=report['start_date'],
@@ -1335,24 +1430,21 @@ def api_report_pdf(report_id, brand_name):
             total_portfolio_revenue=total_portfolio,
             ai_narrative=ai_narrative,
         )
+        pdf_bytes = render_pdf_bytes(html_content)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-    if os.path.isfile(out_path):
-        return send_file(out_path, as_attachment=True, download_name=fname,
-                         mimetype='application/pdf')
-
-    # Playwright may not be installed on Railway — fall back to HTML
-    html_path = out_path.replace('/pdf/', '/html/').replace('.pdf', '.html')
-    if os.path.isfile(html_path):
-        return send_file(html_path, mimetype='text/html')
-
-    abort(500)
+    return send_file(
+        io.BytesIO(pdf_bytes),
+        as_attachment=True,
+        download_name=fname,
+        mimetype='application/pdf',
+    )
 
 
 @app.route('/api/report_html/<int:report_id>/<path:brand_name>')
 def api_report_html(report_id, brand_name):
-    """Generate and serve an HTML report for a single brand from stored DB data."""
+    """Generate and stream the interactive HTML report for a single brand from DB data."""
     report = ds.get_report(report_id)
     if not report:
         abort(404)
@@ -1374,13 +1466,8 @@ def api_report_html(report_id, brand_name):
     total_portfolio = sum(b['total_revenue'] for b in all_bk)
     avg_portfolio   = total_portfolio / max(len(all_bk), 1)
 
-    safe     = _safe_name(brand_name)
-    fname    = f"{safe}_Report_{report['start_date']}_{report['end_date']}.pdf"
-    out_path = os.path.join(PDF_DIR, fname)
-
     try:
-        generate_pdf_html(
-            output_path=out_path,
+        html_content = render_html_report(
             brand_name=brand_name,
             kpis=kpis,
             start_date=report['start_date'],
@@ -1392,11 +1479,7 @@ def api_report_html(report_id, brand_name):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-    html_path = out_path.replace('/pdf/', '/html/').replace('.pdf', '.html')
-    if os.path.isfile(html_path):
-        return send_file(html_path, mimetype='text/html')
-
-    abort(500)
+    return Response(html_content, mimetype='text/html')
 
 
 @app.route('/files')
@@ -1428,25 +1511,29 @@ def forecasting():
     latest_report = ds.get_latest_report()
     depletions = {}
     if latest_report:
-        for bk in ds.get_all_brand_kpis(latest_report['id']):
-            depletions[bk['brand_name']] = stock_depletion_date(bk)
+        depletions = _merge_depletions_by_brand(ds.get_all_brand_kpis(latest_report['id']))
 
     growing_count  = sum(1 for f in forecasts.values() if f['growth_label'] == 'Growing')
     declining_count= sum(1 for f in forecasts.values() if f['growth_label'] == 'Declining')
     stable_count   = sum(1 for f in forecasts.values() if f['growth_label'] == 'Stable')
     stock_warning_count = sum(1 for d in depletions.values()
                               if d.get('urgency') in ('critical', 'warning'))
+    eligible_3m_count = sum(1 for f in forecasts.values() if f.get('horizons', {}).get('3m', {}).get('eligible'))
+    eligible_6m_count = sum(1 for f in forecasts.values() if f.get('horizons', {}).get('6m', {}).get('eligible'))
+    eligible_12m_count = sum(1 for f in forecasts.values() if f.get('horizons', {}).get('12m', {}).get('eligible'))
 
     # Serialise forecasts to JSON (no numpy types)
     import json as _json
-    forecasts_safe = {k: {kk: (float(vv) if isinstance(vv, (int, float, np.floating)) else vv)
-                           for kk, vv in v.items()} for k, v in forecasts.items()}
+    forecasts_safe = forecasts
 
     return render_template('portal/forecasting.html',
                            forecasts=forecasts, forecasts_json=_json.dumps(forecasts_safe),
                            depletions=depletions, report=report,
                            growing_count=growing_count, declining_count=declining_count,
                            stable_count=stable_count, stock_warning_count=stock_warning_count,
+                           eligible_3m_count=eligible_3m_count,
+                           eligible_6m_count=eligible_6m_count,
+                           eligible_12m_count=eligible_12m_count,
                            alert_count=alert_count)
 
 
@@ -2208,6 +2295,7 @@ def api_db_import():
                     k = all_kpis[b]
                     share = round(k['total_revenue'] / max(total_rev, 1) * 100, 2)
                     ds.save_brand_kpis(report_id, b, k, k.get('perf_score', {}), share)
+                    ds.save_brand_detail_json(report_id, b, k)
                     if not k['daily_sales'].empty:
                         ds.save_daily_sales(report_id, b, k['daily_sales'])
                     history = ds.get_brand_history(b, limit=3)

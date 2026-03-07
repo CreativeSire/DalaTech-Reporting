@@ -95,6 +95,15 @@
         <div class="kpi-label" style="margin-bottom:4px;">Next Month Forecast</div>
         <div style="font-size:18px;font-weight:800;color:var(--navy);">₦{{ "{:,.0f}".format(forecast.forecast) }}</div>
         <span style="font-size:11px;font-weight:600;color:{{ forecast.growth_color }};">{{ forecast.growth_label }}</span>
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);">
+          {{ forecast.data_points }} months history · {{ forecast.consecutive_months }} consecutive · {{ forecast.confidence_band }} readiness
+        </div>
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+          {% for key, label in [('3m', '3M'), ('6m', '6M'), ('12m', '12M')] %}
+            {% set hz = forecast.horizons.get(key, {}) %}
+            <span class="badge {% if hz.eligible %}badge-green{% else %}badge-amber{% endif %}">{{ label }} {% if hz.eligible %}Ready{% else %}Limited{% endif %}</span>
+          {% endfor %}
+        </div>
       </div>
       {% endif %}
     </div>
@@ -131,11 +140,14 @@
   {% endif %}
 
   <!-- Download -->
-  {% if pdf_file %}
+  {% if report %}
   <div class="card" style="text-align:center;">
     <h4 style="color:var(--navy);margin-bottom:8px;">Your Report</h4>
     <p style="color:var(--muted);font-size:12px;margin-bottom:16px;">Download your detailed {{ report.month_label if report }} sales report</p>
-    <a href="/download/pdf/{{ pdf_file }}" class="btn btn-primary">⬇ Download PDF Report</a>
+    <div style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap;">
+      <a href="{{ url_for('api_report_pdf', report_id=report.id, brand_name=brand_name) }}" class="btn btn-primary">⬇ Download PDF Report</a>
+      <a href="{{ url_for('api_report_html', report_id=report.id, brand_name=brand_name) }}" target="_blank" class="btn btn-outline">Open Interactive HTML</a>
+    </div>
   </div>
   {% endif %}
 

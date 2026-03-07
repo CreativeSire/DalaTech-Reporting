@@ -90,6 +90,7 @@ def import_month(df_all, year, month, ds):
         k = all_kpis[b]
         share = round(k['total_revenue'] / max(total_rev, 1) * 100, 2)
         ds.save_brand_kpis(report_id, b, k, k.get('perf_score', {}), share)
+        ds.save_brand_detail_json(report_id, b, k)
         if not k['daily_sales'].empty:
             ds.save_daily_sales(report_id, b, k['daily_sales'])
         history = ds.get_brand_history(b, limit=3)

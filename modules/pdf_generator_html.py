@@ -34,28 +34,13 @@ jinja_env = Environment(
 )
 
 
-def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
-                      start_date: str, end_date: str,
-                      portfolio_avg_revenue: float = None,
-                      total_portfolio_revenue: float = None,
-                      ai_narrative: str = None,
-                      sheets_url: str = None) -> str:
-    """
-    Generate a 2-page PDF using HTML template + Playwright.
-
-    Args:
-        output_path:             Absolute path for the output PDF
-        brand_name:              Brand partner display name
-        kpis:                    Dict from calculate_kpis()
-        start_date / end_date:   'YYYY-MM-DD'
-        portfolio_avg_revenue:   Optional — avg revenue across all brands
-        total_portfolio_revenue: Optional — total revenue all brands
-        ai_narrative:            Optional — Gemini AI narrative text (replaces rule-based)
-        sheets_url:              Optional — Google Sheets shareable URL to embed
-
-    Returns:
-        output_path
-    """
+def render_pdf_report_html(brand_name: str, kpis: dict,
+                           start_date: str, end_date: str,
+                           portfolio_avg_revenue: float = None,
+                           total_portfolio_revenue: float = None,
+                           ai_narrative: str = None,
+                           sheets_url: str = None) -> str:
+    """Render the print-oriented report HTML used for PDF export."""
     # ── Charts (matplotlib → base64) ──────────────────────────────────────────
     dual_trend_chart  = chart_dual_trend(kpis['daily_sales'])
     stock_chart       = chart_stock_vertical(kpis['closing_stock'])
@@ -138,8 +123,8 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
             logo_data = f"data:image/jpeg;base64,{base64.b64encode(f.read()).decode()}"
 
     # ── Render template ────────────────────────────────────────────────────────
-    template     = jinja_env.get_template('report_template.html')
-    html_content = template.render(
+    template = jinja_env.get_template('report_template.html')
+    return template.render(
         brand_name=brand_name,
         start_date=display_start,
         end_date=display_end,
@@ -163,6 +148,55 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
         supply_table=supply_table,
     )
 
+
+def render_pdf_bytes(html_content: str) -> bytes:
+    """Render PDF bytes from already-built HTML."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.set_content(html_content, wait_until='networkidle')
+        pdf_bytes = page.pdf(
+            format='A4',
+            print_background=True,
+            margin={'top': '0mm', 'right': '0mm', 'bottom': '0mm', 'left': '0mm'},
+        )
+        browser.close()
+    return pdf_bytes
+
+
+def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
+                      start_date: str, end_date: str,
+                      portfolio_avg_revenue: float = None,
+                      total_portfolio_revenue: float = None,
+                      ai_narrative: str = None,
+                      sheets_url: str = None) -> str:
+    """
+    Generate a 2-page PDF using HTML template + Playwright.
+
+    Args:
+        output_path:             Absolute path for the output PDF
+        brand_name:              Brand partner display name
+        kpis:                    Dict from calculate_kpis()
+        start_date / end_date:   'YYYY-MM-DD'
+        portfolio_avg_revenue:   Optional — avg revenue across all brands
+        total_portfolio_revenue: Optional — total revenue all brands
+        ai_narrative:            Optional — Gemini AI narrative text (replaces rule-based)
+        sheets_url:              Optional — Google Sheets shareable URL to embed
+
+    Returns:
+        output_path
+    """
+    html_content = render_pdf_report_html(
+        brand_name=brand_name,
+        kpis=kpis,
+        start_date=start_date,
+        end_date=end_date,
+        portfolio_avg_revenue=portfolio_avg_revenue,
+        total_portfolio_revenue=total_portfolio_revenue,
+        ai_narrative=ai_narrative,
+        sheets_url=sheets_url,
+    )
+
     # ── Render to PDF via Playwright ───────────────────────────────────────────
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
@@ -174,25 +208,9 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
 
     # Try to generate PDF with Playwright
     try:
-        with sync_playwright() as p:
-            # Try to launch browser - may fail if browsers not installed
-            try:
-                browser = p.chromium.launch()
-            except Exception as launch_err:
-                # Browser not installed - return HTML path as fallback
-                print(f"Playwright browser not available: {launch_err}")
-                print(f"HTML report saved to: {html_output_path}")
-                return html_output_path
-            
-            page = browser.new_page()
-            page.set_content(html_content, wait_until='networkidle')
-            page.pdf(
-                path=output_path,
-                format='A4',
-                print_background=True,
-                margin={'top': '0mm', 'right': '0mm', 'bottom': '0mm', 'left': '0mm'},
-            )
-            browser.close()
+        pdf_bytes = render_pdf_bytes(html_content)
+        with open(output_path, 'wb') as f:
+            f.write(pdf_bytes)
         return output_path
     except Exception as e:
         # PDF generation failed - return HTML path as fallback

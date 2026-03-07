@@ -15,6 +15,8 @@ import os
 import io
 import pandas as pd
 
+from .brand_names import canonicalize_brand_name
+
 # ── CSV chunk size (rows per chunk for large file streaming) ─────────────────
 _CSV_CHUNKSIZE = 50_000
 
@@ -105,7 +107,7 @@ def load_and_clean(file_source):
     df['Sales_Value']  = pd.to_numeric(df['Sales_Value'], errors='coerce').fillna(0)
     
     # Normalize brand names to prevent duplicates (Wilson vs Wilson's, etc.)
-    df['Brand Partner'] = df['Brand Partner'].astype(str).str.strip().apply(_normalize_brand_name)
+    df['Brand Partner'] = df['Brand Partner'].astype(str).str.strip().apply(canonicalize_brand_name)
     df['SKUs']          = df['SKUs'].astype(str).str.strip()
     df['Particulars']   = df['Particulars'].astype(str).str.strip()
     df['Vch Type']      = df['Vch Type'].astype(str).str.strip()
@@ -212,55 +214,7 @@ def load_brand_file(file_source, brand_name: str) -> pd.DataFrame:
     data['Particulars']  = data['Particulars'].astype(str).str.strip()
     data['Vch Type']     = data['Vch Type'].astype(str).str.strip()
     data['Vch No.']      = data['Vch No.'].astype(str).str.strip()
-    data['Brand Partner'] = data['Brand Partner'].astype(str).str.strip().apply(_normalize_brand_name)
+    data['Brand Partner'] = data['Brand Partner'].astype(str).str.strip().apply(canonicalize_brand_name)
 
     return data[['Brand Partner', 'SKUs', 'Date', 'Particulars', 'Vch Type', 'Vch No.', 'Quantity', 'Sales_Value']]
 
-
-def _normalize_brand_name(name):
-    """
-    Normalize brand name to prevent duplicates.
-    Handles cases like: Wilson vs Wilson's, Augustsecret vs August Secrets
-    """
-    if not name or pd.isna(name):
-        return ''
-    
-    import re
-    name = str(name).strip()
-    
-    # Convert to title case for consistency
-    name = name.title()
-    
-    # Remove possessive 's at the end (Wilson's -> Wilson)
-    name = re.sub(r"'[Ss]$", '', name)
-    
-    # Fix common variations of spacing
-    # Augustsecret -> August Secrets
-    name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
-    
-    # Remove extra whitespace
-    name = ' '.join(name.split())
-    
-    # Normalize common variations
-    replacements = {
-        'Wilsons': 'Wilson',
-        'Augustsecret': 'August Secrets',
-        'Fab Fresh': 'Fabfresh',
-        'Fab Fresh': 'Fabfresh',
-        'Sooyah': 'Sooya',
-        'Jkb': 'JKB',
-        'B Boon': 'B-boon',
-        'BBoon': 'B-boon',
-        'Eti Farm': 'Eti Farms',
-        'Etifarms': 'Eti Farms',
-        'Cressolife': 'Cresso Life',
-        'Qfruits': 'Q-Fruits',
-        'Q Fruits': 'Q-Fruits',
-    }
-    
-    # Check for exact matches in replacements
-    for old, new in replacements.items():
-        if name.lower() == old.lower():
-            return new
-    
-    return name

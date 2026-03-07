@@ -30,6 +30,15 @@
   .stock-critical { background:#E8192C; }
   .trend-spark { height:50px; margin-top:8px; }
   .summary-cards { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:28px; }
+  .horizon-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:14px; }
+  .horizon-box { border:1px solid var(--gray); border-radius:10px; padding:10px; background:var(--bg); min-height:88px; }
+  .horizon-box strong { display:block; color:var(--navy); font-size:12px; margin-bottom:4px; }
+  .horizon-value { font-size:14px; font-weight:800; color:var(--text); }
+  .horizon-range { font-size:10px; color:var(--muted); margin-top:2px; }
+  .readiness-strip { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+  .mini-badge { display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:999px; font-size:10px; font-weight:700; }
+  .mini-badge.ok { background:rgba(30,132,73,.1); color:var(--green); }
+  .mini-badge.no { background:var(--gray); color:var(--muted); }
   @media(max-width:900px){.summary-cards{grid-template-columns:1fr 1fr;}}
 </style>
 {% endblock %}
@@ -66,6 +75,21 @@
     <div class="kpi-value">{{ stock_warning_count }}</div>
     <div class="kpi-sub">Critical or watch</div>
   </div>
+  <div class="kpi-card blue">
+    <div class="kpi-label">3-Month Ready</div>
+    <div class="kpi-value">{{ eligible_3m_count }}</div>
+    <div class="kpi-sub">Brands with enough depth</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">6-Month Ready</div>
+    <div class="kpi-value">{{ eligible_6m_count }}</div>
+    <div class="kpi-sub">Higher-confidence set</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">12-Month Ready</div>
+    <div class="kpi-value">{{ eligible_12m_count }}</div>
+    <div class="kpi-sub">Strategic-only candidates</div>
+  </div>
 </div>
 
 <!-- Portfolio Forecast Chart -->
@@ -101,6 +125,32 @@
       {{ fc.confidence }} confidence
     </div>
     <span class="text-muted fs-sm">· {{ fc.data_points }} months data</span>
+    <span class="text-muted fs-sm">· {{ fc.consecutive_months }} consecutive</span>
+  </div>
+  <div class="text-muted fs-sm mt-1">Readiness score: <strong style="color:var(--navy);">{{ fc.confidence_score }}/100</strong> ({{ fc.confidence_band }})</div>
+
+  <div class="readiness-strip">
+    {% for key, label in [('3m', '3M'), ('6m', '6M'), ('12m', '12M')] %}
+    {% set hz = fc.horizons.get(key, {}) %}
+    <span class="mini-badge {% if hz.eligible %}ok{% else %}no{% endif %}">
+      {{ label }} {% if hz.eligible %}Ready{% else %}Not Ready{% endif %}
+    </span>
+    {% endfor %}
+  </div>
+
+  <div class="horizon-grid">
+    {% for key, label in [('3m', '3 Months'), ('6m', '6 Months'), ('12m', '12 Months')] %}
+    {% set hz = fc.horizons.get(key, {}) %}
+    <div class="horizon-box">
+      <strong>{{ label }}</strong>
+      {% if hz.eligible %}
+      <div class="horizon-value">₦{{ "{:,.0f}".format(hz.forecast) }}</div>
+      <div class="horizon-range">Range: ₦{{ "{:,.0f}".format(hz.low) }} to ₦{{ "{:,.0f}".format(hz.high) }}</div>
+      {% else %}
+      <div class="horizon-range">{{ hz.reason }}</div>
+      {% endif %}
+    </div>
+    {% endfor %}
   </div>
 
   {% if dep.urgency in ('critical','warning') %}

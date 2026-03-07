@@ -44,9 +44,12 @@ def _seed_volume_db_if_needed():
             needs_seed = True
 
     if needs_seed:
-        import shutil
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        shutil.copy2(_default_db, DB_PATH)
+        src = sqlite3.connect(_default_db)
+        dst = sqlite3.connect(DB_PATH)
+        src.backup(dst)
+        dst.close()
+        src.close()
 
 _seed_volume_db_if_needed()
 
@@ -205,6 +208,22 @@ class DataStore:
                     FOREIGN KEY (report_id) REFERENCES reports(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS brand_detail_json (
+                    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                    report_id           INTEGER NOT NULL,
+                    brand_name          TEXT NOT NULL,
+                    top_stores_json     TEXT DEFAULT '[]',
+                    product_value_json  TEXT DEFAULT '[]',
+                    product_qty_json    TEXT DEFAULT '[]',
+                    closing_stock_json  TEXT DEFAULT '[]',
+                    pickup_json         TEXT DEFAULT '[]',
+                    supply_json         TEXT DEFAULT '[]',
+                    reorder_json        TEXT DEFAULT '[]',
+                    heatmap_json        TEXT DEFAULT '[]',
+                    UNIQUE(report_id, brand_name),
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
                 CREATE TABLE IF NOT EXISTS generation_jobs (
                     id          TEXT PRIMARY KEY,
                     status      TEXT DEFAULT 'running',
@@ -321,6 +340,7 @@ class DataStore:
             conn.execute("DELETE FROM alerts WHERE report_id=?", (report_id,))
             conn.execute("DELETE FROM brand_kpis WHERE report_id=?", (report_id,))
             conn.execute("DELETE FROM daily_sales WHERE report_id=?", (report_id,))
+            conn.execute("DELETE FROM brand_detail_json WHERE report_id=?", (report_id,))
             try:
                 conn.execute("DELETE FROM ai_narratives WHERE report_id=?", (report_id,))
             except Exception:
@@ -397,6 +417,45 @@ class DataStore:
                     "INSERT INTO daily_sales (report_id, brand_name, date, revenue, qty) VALUES (?,?,?,?,?)",
                     rows
                 )
+
+    def save_brand_detail_json(self, report_id, brand_name, kpis):
+        """Persist the detailed DataFrames (stores, SKUs, inventory) as JSON."""
+        def _df_json(df):
+            if df is None or (hasattr(df, 'empty') and df.empty):
+                return '[]'
+            try:
+                return df.to_json(orient='records')
+            except Exception:
+                return '[]'
+
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO brand_detail_json
+                   (report_id, brand_name, top_stores_json, product_value_json,
+                    product_qty_json, closing_stock_json, pickup_json, supply_json,
+                    reorder_json, heatmap_json)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    report_id, brand_name,
+                    _df_json(kpis.get('top_stores')),
+                    _df_json(kpis.get('product_value')),
+                    _df_json(kpis.get('product_qty')),
+                    _df_json(kpis.get('closing_stock')),
+                    _df_json(kpis.get('pickup_summary')),
+                    _df_json(kpis.get('supply_summary')),
+                    _df_json(kpis.get('reorder_analysis')),
+                    _df_json(kpis.get('store_heatmap_df')),
+                )
+            )
+
+    def get_brand_detail_json(self, report_id, brand_name):
+        """Return the stored detail JSON dict, or None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM brand_detail_json WHERE report_id=? AND brand_name=?",
+                (report_id, brand_name)
+            ).fetchone()
+            return dict(row) if row else None
 
     def get_brand_history(self, brand_name, limit=12):
         """Return brand KPIs across all reports, newest first."""
@@ -847,7 +906,7 @@ class DataStore:
         """Remove one brand's data from a report without touching other brands.
         Used for additive merge mode — lets you add/update individual brands."""
         with self._connect() as conn:
-            for table in ('alerts', 'brand_kpis', 'daily_sales'):
+            for table in ('alerts', 'brand_kpis', 'daily_sales', 'brand_detail_json'):
                 conn.execute(
                     f"DELETE FROM {table} WHERE report_id=? AND brand_name=?",
                     (report_id, brand_name)

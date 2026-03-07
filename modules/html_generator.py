@@ -313,24 +313,12 @@ def plotly_reorder_bars(reorder_df: pd.DataFrame) -> str:
 #  PUBLIC ENTRY POINT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def generate_html(output_path: str, brand_name: str, kpis: dict,
-                  start_date: str, end_date: str,
-                  portfolio_avg_revenue: float = None,
-                  total_portfolio_revenue: float = None) -> str:
-    """
-    Generate a standalone interactive HTML report using Plotly.
-
-    Args:
-        output_path:              Absolute path for .html output file
-        brand_name:               Brand partner display name
-        kpis:                     Dict from calculate_kpis()
-        start_date / end_date:    'YYYY-MM-DD'
-        portfolio_avg_revenue:    Optional — avg revenue across all brands (for scorecard)
-        total_portfolio_revenue:  Optional — sum revenue all brands (for portfolio share %)
-
-    Returns:
-        output_path
-    """
+def render_html_report(brand_name: str, kpis: dict,
+                       start_date: str, end_date: str,
+                       portfolio_avg_revenue: float = None,
+                       total_portfolio_revenue: float = None,
+                       ai_narrative: str = None) -> str:
+    """Render the standalone interactive HTML report and return the HTML string."""
     # ── Plotly chart divs ─────────────────────────────────────────────────────
     chart_trend    = plotly_dual_trend(kpis['daily_sales'])
     chart_stores   = plotly_top_stores(kpis['top_stores'])
@@ -396,7 +384,7 @@ def generate_html(output_path: str, brand_name: str, kpis: dict,
     ]
 
     # ── Narrative ─────────────────────────────────────────────────────────────
-    narrative = generate_narrative(brand_name, kpis, start_date, end_date)
+    narrative = ai_narrative or generate_narrative(brand_name, kpis, start_date, end_date)
 
     # ── Dates ─────────────────────────────────────────────────────────────────
     start_dt = datetime.strptime(start_date, '%Y-%m-%d')
@@ -432,6 +420,38 @@ def generate_html(output_path: str, brand_name: str, kpis: dict,
         chart_heatmap=chart_heatmap,
         chart_stock=chart_stock,
         chart_reorder=chart_reorder,
+    )
+
+    return html_content
+
+
+def generate_html(output_path: str, brand_name: str, kpis: dict,
+                  start_date: str, end_date: str,
+                  portfolio_avg_revenue: float = None,
+                  total_portfolio_revenue: float = None,
+                  ai_narrative: str = None) -> str:
+    """
+    Generate a standalone interactive HTML report using Plotly.
+
+    Args:
+        output_path:              Absolute path for .html output file
+        brand_name:               Brand partner display name
+        kpis:                     Dict from calculate_kpis()
+        start_date / end_date:    'YYYY-MM-DD'
+        portfolio_avg_revenue:    Optional — avg revenue across all brands (for scorecard)
+        total_portfolio_revenue:  Optional — sum revenue all brands (for portfolio share %)
+
+    Returns:
+        output_path
+    """
+    html_content = render_html_report(
+        brand_name=brand_name,
+        kpis=kpis,
+        start_date=start_date,
+        end_date=end_date,
+        portfolio_avg_revenue=portfolio_avg_revenue,
+        total_portfolio_revenue=total_portfolio_revenue,
+        ai_narrative=ai_narrative,
     )
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)

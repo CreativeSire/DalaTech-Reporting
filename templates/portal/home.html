@@ -63,9 +63,7 @@
       </div>
       <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
         <a href="/dashboard" class="btn btn-navy btn-sm">View Dashboard</a>
-        {% set month_tag = latest.start_date[:7].replace('-','') %}
-        <a href="/download/html/PORTFOLIO_Dashboard_{{ latest.start_date[5:7]|upper }}{{ latest.start_date[:4] }}.html"
-           target="_blank" class="btn btn-outline btn-sm">Portfolio HTML</a>
+        <a href="/dashboard?report_id={{ latest.id }}" class="btn btn-outline btn-sm">Open Portfolio View</a>
       </div>
     </div>
     {% endif %}

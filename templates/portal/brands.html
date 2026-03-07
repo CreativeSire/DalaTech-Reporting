@@ -32,7 +32,6 @@
     </thead>
     <tbody>
       {% for b in brand_kpis %}
-      {% set safe = b.brand_name.replace(' ','_').replace("'","").replace('/','_') %}
       {% set gc = {'A':'#1E8449','B':'#2E86C1','C':'#C0922A','D':'#E8192C'} %}
       {% set token_info = tokens.get(b.brand_name) %}
       {% set fcast = forecasts.get(b.brand_name, {}) %}
@@ -68,8 +67,8 @@
           {% endif %}
         </td>
         <td style="display:flex;gap:4px;">
-          <a href="/download/pdf/{{ safe }}_Report_Feb2026.pdf" title="PDF" class="btn btn-primary btn-sm">PDF</a>
-          <a href="/download/html/{{ safe }}_Report_Feb2026.html" target="_blank" title="HTML" class="btn btn-navy btn-sm">HTML</a>
+          <a href="{{ url_for('api_report_pdf', report_id=report.id, brand_name=b.brand_name) }}" title="PDF" class="btn btn-primary btn-sm">PDF</a>
+          <a href="{{ url_for('api_report_html', report_id=report.id, brand_name=b.brand_name) }}" target="_blank" title="HTML" class="btn btn-navy btn-sm">HTML</a>
         </td>
       </tr>
       {% else %}
