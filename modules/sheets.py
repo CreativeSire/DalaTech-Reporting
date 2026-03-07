@@ -311,3 +311,64 @@ def sheets_auth_method():
     if os.path.isfile(CREDS_PATH):
         return 'service_account'
     return None
+
+
+def pull_sheet_as_df(sheet_id_or_url: str, tab_name: str = None) -> pd.DataFrame:
+    """
+    Pull data from a Google Sheet and return it as a cleaned DataFrame.
+
+    The sheet must use the standard DALA column layout (same as what
+    push_brand_to_sheets() exports):
+        Date, Brand Partner, SKUs, Particulars, Vch Type, Vch No., Quantity, Sales_Value
+
+    Or the raw Tally column names that COLUMN_RENAME_MAP handles:
+        Brand Partners, Retailers, Value  (renamed automatically).
+
+    Args:
+        sheet_id_or_url: Full Google Sheets URL or bare spreadsheet ID.
+        tab_name:        Sheet/tab name to read (default: first sheet).
+
+    Returns:
+        pd.DataFrame with standard column names and correct dtypes.
+    """
+    import re as _re
+
+    # Extract sheet ID from URL if needed
+    url_match = _re.search(r'spreadsheets/d/([a-zA-Z0-9-_]+)', sheet_id_or_url)
+    sheet_id  = url_match.group(1) if url_match else sheet_id_or_url.strip()
+
+    client      = _get_client()
+    spreadsheet = client.open_by_key(sheet_id)
+    worksheet   = spreadsheet.worksheet(tab_name) if tab_name else spreadsheet.get_worksheet(0)
+
+    records = worksheet.get_all_values()
+    if len(records) < 2:
+        raise ValueError(f"Sheet '{worksheet.title}' has fewer than 2 rows (header + data).")
+
+    headers = records[0]
+    data    = records[1:]
+    df      = pd.DataFrame(data, columns=headers)
+
+    # Apply standard column renames (handles both raw Tally names and already-renamed names)
+    from modules.ingestion import COLUMN_RENAME_MAP
+    df = df.rename(columns=COLUMN_RENAME_MAP)
+
+    # Parse dates — sheets exported by push_brand_to_sheets() use DD/MM/YYYY
+    if 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
+
+    # Numeric columns
+    for col in ('Quantity', 'Sales_Value'):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    # Strip whitespace from text columns
+    for col in ('Brand Partner', 'SKUs', 'Particulars', 'Vch Type', 'Vch No.'):
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+
+    # Drop rows where date could not be parsed
+    if 'Date' in df.columns:
+        df = df.dropna(subset=['Date']).reset_index(drop=True)
+
+    return df

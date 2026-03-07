@@ -759,3 +759,53 @@ class DataStore:
                 except Exception:
                     job[key] = []
             return job
+
+    # ── Database health & additive merge ─────────────────────────────────────
+
+    def get_db_health_stats(self):
+        """Return aggregate database statistics for the Database page banner."""
+        with self._connect() as conn:
+            r = conn.execute("""
+                SELECT
+                    COUNT(*) AS total_reports,
+                    MIN(start_date) AS earliest,
+                    MAX(end_date) AS latest,
+                    COALESCE(SUM(total_revenue), 0) AS total_revenue
+                FROM reports
+            """).fetchone()
+            brands_row = conn.execute(
+                "SELECT COUNT(DISTINCT brand_name) AS total_brands FROM brand_kpis"
+            ).fetchone()
+            sparse_row = conn.execute(
+                "SELECT COUNT(*) AS sparse FROM reports WHERE brand_count < 5"
+            ).fetchone()
+            last_activity = conn.execute(
+                "SELECT action, detail, created_at FROM activity_log ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        stats = {
+            'total_reports':  r['total_reports'] if r else 0,
+            'earliest':       r['earliest'] if r else None,
+            'latest':         r['latest'] if r else None,
+            'total_revenue':  r['total_revenue'] if r else 0,
+            'total_brands':   brands_row['total_brands'] if brands_row else 0,
+            'sparse_months':  sparse_row['sparse'] if sparse_row else 0,
+            'last_action':    dict(last_activity) if last_activity else None,
+        }
+        return stats
+
+    def clear_brand_from_report(self, report_id: int, brand_name: str):
+        """Remove one brand's data from a report without touching other brands.
+        Used for additive merge mode — lets you add/update individual brands."""
+        with self._connect() as conn:
+            for table in ('alerts', 'brand_kpis', 'daily_sales'):
+                conn.execute(
+                    f"DELETE FROM {table} WHERE report_id=? AND brand_name=?",
+                    (report_id, brand_name)
+                )
+            try:
+                conn.execute(
+                    "DELETE FROM ai_narratives WHERE report_id=? AND brand_name=?",
+                    (report_id, brand_name)
+                )
+            except Exception:
+                pass

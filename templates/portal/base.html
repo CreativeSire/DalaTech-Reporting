@@ -4,24 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}DALA Analytics{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
       --navy:#1B2B5E; --red:#E8192C; --blue:#2E86C1; --green:#1E8449;
-      --amber:#C0922A; --gray:#DDE3ED; --bg:#F4F6FA; --white:#FFFFFF;
-      --muted:#7A849E; --text:#1A1A2E; --sidebar:220px;
+      --amber:#C0922A; --gray:#DDE3ED; --bg:#F2F5FB; --white:#FFFFFF;
+      --muted:#7A849E; --text:#1A1A2E; --sidebar:240px;
     }
-    body { font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif; font-size:13px; background:var(--bg); color:var(--text); display:flex; min-height:100vh; }
+    body { font-family:'Inter','Segoe UI','Helvetica Neue',Arial,sans-serif; font-size:14px; background:var(--bg); color:var(--text); display:flex; min-height:100vh; }
 
     /* SIDEBAR */
-    .sidebar { width:var(--sidebar); background:var(--navy); color:white; display:flex; flex-direction:column; position:fixed; top:0; left:0; height:100vh; z-index:100; }
+    .sidebar { width:var(--sidebar); background:linear-gradient(180deg,#1B2B5E 0%,#162350 100%); color:white; display:flex; flex-direction:column; position:fixed; top:0; left:0; height:100vh; z-index:100; }
     .sidebar-logo { padding:20px 16px 16px; border-bottom:1px solid rgba(255,255,255,.1); }
     .sidebar-logo .brand { font-size:20px; font-weight:800; letter-spacing:.5px; }
     .sidebar-logo .brand span { color:var(--red); }
     .sidebar-logo .tagline { font-size:10px; opacity:.6; text-transform:uppercase; letter-spacing:.8px; margin-top:2px; }
     .sidebar-nav { flex:1; padding:16px 0; overflow-y:auto; }
-    .nav-section { padding:6px 16px 2px; font-size:9px; text-transform:uppercase; letter-spacing:1px; color:rgba(255,255,255,.4); }
-    .nav-link { display:flex; align-items:center; gap:10px; padding:9px 16px; color:rgba(255,255,255,.75); text-decoration:none; font-size:13px; transition:all .15s; border-left:3px solid transparent; }
+    .nav-section { padding:6px 16px 2px; font-size:9px; text-transform:uppercase; letter-spacing:1px; color:rgba(255,255,255,.4); margin-top:12px; }
+    .nav-section:first-child { margin-top:0; }
+    .nav-link { display:flex; align-items:center; gap:10px; padding:10px 18px; color:rgba(255,255,255,.75); text-decoration:none; font-size:13px; transition:all .15s; border-left:4px solid transparent; }
     .nav-link:hover { background:rgba(255,255,255,.08); color:white; }
     .nav-link.active { background:rgba(232,25,44,.2); color:white; border-left-color:var(--red); font-weight:600; }
     .nav-icon { font-size:16px; width:20px; text-align:center; flex-shrink:0; }
@@ -33,21 +37,21 @@
 
     /* MAIN */
     .main-wrap { margin-left:var(--sidebar); flex:1; display:flex; flex-direction:column; min-height:100vh; }
-    .topbar { background:var(--white); border-bottom:1px solid var(--gray); padding:12px 28px; display:flex; align-items:center; gap:16px; position:sticky; top:0; z-index:50; }
+    .topbar { background:var(--white); border-bottom:1px solid var(--gray); padding:14px 32px; display:flex; align-items:center; gap:16px; position:sticky; top:0; z-index:50; }
     .topbar h2 { font-size:16px; font-weight:700; color:var(--navy); flex:1; }
     .topbar-actions { display:flex; align-items:center; gap:12px; }
-    .content { flex:1; padding:24px 28px; }
+    .content { flex:1; padding:28px 32px; }
 
     /* CARDS */
-    .card { background:var(--white); border-radius:10px; padding:20px; box-shadow:0 2px 8px rgba(27,43,94,.07); }
-    .card-sm { background:var(--white); border-radius:10px; padding:16px; box-shadow:0 2px 8px rgba(27,43,94,.07); }
+    .card { background:var(--white); border-radius:12px; padding:24px; box-shadow:0 1px 3px rgba(27,43,94,.06),0 4px 16px rgba(27,43,94,.08); border:1px solid rgba(27,43,94,.06); }
+    .card-sm { background:var(--white); border-radius:12px; padding:16px; box-shadow:0 1px 3px rgba(27,43,94,.06),0 4px 16px rgba(27,43,94,.08); border:1px solid rgba(27,43,94,.06); }
 
     /* BUTTONS */
-    .btn { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:7px; font-size:13px; font-weight:600; cursor:pointer; border:none; text-decoration:none; transition:all .15s; }
+    .btn { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; border:none; text-decoration:none; transition:all .15s; }
     .btn-primary { background:var(--red); color:white; }
-    .btn-primary:hover { background:#c4162a; }
+    .btn-primary:hover { background:#c4162a; box-shadow:0 2px 8px rgba(232,25,44,.25); }
     .btn-navy { background:var(--navy); color:white; }
-    .btn-navy:hover { background:#14204a; }
+    .btn-navy:hover { background:#14204a; box-shadow:0 2px 8px rgba(27,43,94,.25); }
     .btn-outline { background:transparent; border:1.5px solid var(--gray); color:var(--text); }
     .btn-outline:hover { border-color:var(--navy); color:var(--navy); }
     .btn-sm { padding:5px 12px; font-size:12px; }
@@ -59,7 +63,7 @@
     .data-table th { background:var(--navy); color:white; padding:9px 12px; font-size:10px; text-transform:uppercase; letter-spacing:.6px; font-weight:600; }
     .data-table td { padding:9px 12px; border-bottom:1px solid var(--gray); vertical-align:middle; }
     .data-table tr:last-child td { border-bottom:none; }
-    .data-table tr:hover td { background:rgba(244,246,250,.7); }
+    .data-table tr:hover td { background:rgba(242,245,251,.7); }
 
     /* BADGES */
     .badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:10px; font-weight:700; }
@@ -73,7 +77,7 @@
     /* FORM */
     .form-group { margin-bottom:16px; }
     .form-label { display:block; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); margin-bottom:6px; }
-    .form-control { width:100%; padding:9px 12px; border:1.5px solid var(--gray); border-radius:7px; font-size:13px; font-family:inherit; color:var(--text); transition:border-color .15s; }
+    .form-control { width:100%; padding:9px 12px; border:1.5px solid var(--gray); border-radius:8px; font-size:13px; font-family:inherit; color:var(--text); transition:border-color .15s; }
     .form-control:focus { outline:none; border-color:var(--navy); }
     select.form-control { appearance:none; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%237A849E' stroke-width='1.5' fill='none'/%3E%3C/svg%3E"); background-repeat:no-repeat; background-position:right 12px center; padding-right:32px; }
 
@@ -105,14 +109,18 @@
     .justify-between { justify-content:space-between; }
 
     /* KPI CARDS */
-    .kpi-card { background:var(--white); border-radius:10px; padding:18px 20px; box-shadow:0 2px 8px rgba(27,43,94,.08); position:relative; overflow:hidden; }
-    .kpi-card::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; background:var(--navy); }
+    .kpi-card { background:var(--white); border-radius:12px; padding:20px 24px; box-shadow:0 1px 3px rgba(27,43,94,.06),0 4px 16px rgba(27,43,94,.08); border:1px solid rgba(27,43,94,.06); position:relative; overflow:hidden; }
+    .kpi-card::before { content:''; position:absolute; top:0; left:0; right:0; height:4px; background:var(--navy); }
     .kpi-card.red::before { background:var(--red); }
+    .kpi-card.red { background:linear-gradient(135deg,#fff 60%,rgba(232,25,44,.03) 100%); }
     .kpi-card.blue::before { background:var(--blue); }
+    .kpi-card.blue { background:linear-gradient(135deg,#fff 60%,rgba(46,134,193,.03) 100%); }
     .kpi-card.green::before { background:var(--green); }
+    .kpi-card.green { background:linear-gradient(135deg,#fff 60%,rgba(30,132,73,.03) 100%); }
     .kpi-card.amber::before { background:var(--amber); }
+    .kpi-card.navy { background:linear-gradient(135deg,#fff 60%,rgba(27,43,94,.04) 100%); }
     .kpi-label { font-size:10px; text-transform:uppercase; letter-spacing:.8px; color:var(--muted); font-weight:600; }
-    .kpi-value { font-size:28px; font-weight:800; color:var(--text); margin:6px 0 2px; line-height:1; }
+    .kpi-value { font-size:32px; font-weight:800; color:var(--text); margin:6px 0 2px; line-height:1; letter-spacing:-0.5px; }
     .kpi-value-sm { font-size:20px; font-weight:800; }
     .kpi-sub { font-size:11px; color:var(--muted); }
 
@@ -159,7 +167,7 @@
       <span class="nav-icon">🏢</span> Brand Partners
     </a>
 
-    <div class="nav-section" style="margin-top:8px;">Intelligence</div>
+    <div class="nav-section">Intelligence</div>
     <a href="/forecasting" class="nav-link {% if request.endpoint=='forecasting' %}active{% endif %}">
       <span class="nav-icon">🔮</span> Forecasting
     </a>
@@ -173,7 +181,7 @@
       <span class="nav-icon">🎯</span> Targets
     </a>
 
-    <div class="nav-section" style="margin-top:8px;">Analytics</div>
+    <div class="nav-section">Analytics</div>
     <a href="/history" class="nav-link {% if request.endpoint=='history' %}active{% endif %}">
       <span class="nav-icon">📅</span> History
     </a>
@@ -190,9 +198,9 @@
       <span class="nav-icon">⚡</span> Alert Rules
     </a>
 
-    <div class="nav-section" style="margin-top:8px;">System</div>
-    <a href="/drive-sync" class="nav-link {% if request.endpoint=='drive_sync_dashboard' %}active{% endif %}">
-      <span class="nav-icon">☁️</span> Drive Sync
+    <div class="nav-section">System</div>
+    <a href="/database" class="nav-link {% if request.endpoint in ['database_page','drive_sync_dashboard'] %}active{% endif %}">
+      <span class="nav-icon">🗄️</span> Database
     </a>
     <a href="/settings" class="nav-link {% if request.endpoint=='settings' %}active{% endif %}">
       <span class="nav-icon">⚙️</span> Settings

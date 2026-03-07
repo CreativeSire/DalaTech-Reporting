@@ -1788,60 +1788,298 @@ def whatsapp_webhook():
     )
 
 
-# ── Google Drive Sync ──────────────────────────────────────────────────────────
+# ── Database Layer (replaces Drive Sync page) ──────────────────────────────────
 
 @app.route('/drive-sync')
 def drive_sync_dashboard():
-    """Admin dashboard for Google Drive sync status."""
-    alert_count = ds.get_unacknowledged_count()
-    from modules.drive_sync import drive_available, DRIVE_FOLDERS
+    """Legacy redirect — Drive Sync is now the Database page."""
+    return redirect(url_for('database_page'))
 
+
+def _build_drive_data():
+    """Helper: return drive sync data dict for the database page template."""
+    from modules.drive_sync import drive_available, DRIVE_FOLDERS, DriveSyncOrchestrator
     if not drive_available():
-        return render_template('portal/drive_sync.html',
-                               sync_status='no_credentials',
-                               stats={'total_imports': 0, 'total_errors': 0, 'files_tracked': 0},
-                               all_files=[], folders=DRIVE_FOLDERS,
-                               alert_count=alert_count,
-                               error='No Google credentials found. Run setup_oauth.py or add google_credentials.json.')
-
+        return {
+            'sync_status': 'no_credentials',
+            'sync_stats':  {'total_imports': 0, 'total_errors': 0, 'files_tracked': 0},
+            'folders':     DRIVE_FOLDERS,
+            'drive_files': [],
+            'drive_error': 'No Google credentials found.',
+        }
     try:
-        from modules.drive_sync import DriveSyncOrchestrator
-        orch  = DriveSyncOrchestrator()
-        stats = orch.get_sync_summary()
-        # List files from Drive with their sync status
+        orch          = DriveSyncOrchestrator()
+        stats         = orch.get_sync_summary()
         all_files_raw = orch.list_all_files()
-        # Separate error sentinels from real files
         folder_errors = {f['folder_id']: f['list_error']
                          for f in all_files_raw if f.get('list_error')}
-        all_files = [f for f in all_files_raw if not f.get('list_error')]
-        # Group by folder for the UI
-        folders_data = []
+        all_files     = [f for f in all_files_raw if not f.get('list_error')]
+        folders_data  = []
         for folder in DRIVE_FOLDERS:
             folder_files = [f for f in all_files if f['folder_id'] == folder['id']]
             folders_data.append({
-                'name':        folder['name'],
-                'id':          folder['id'],
-                'files':       folder_files,
-                'list_error':  folder_errors.get(folder['id']),
+                'name':       folder['name'],
+                'id':         folder['id'],
+                'files':      folder_files,
+                'list_error': folder_errors.get(folder['id']),
             })
-        return render_template('portal/drive_sync.html',
-                               sync_status='active',
-                               stats={
-                                   'total_imports':  stats['total_imports'],
-                                   'total_errors':   stats['total_errors'],
-                                   'files_tracked':  stats['total_files_tracked'],
-                               },
-                               all_files=all_files,
-                               folders=folders_data,
-                               alert_count=alert_count,
-                               error=None)
+        return {
+            'sync_status': 'active',
+            'sync_stats':  {
+                'total_imports':  stats['total_imports'],
+                'total_errors':   stats['total_errors'],
+                'files_tracked':  stats['total_files_tracked'],
+            },
+            'folders':     folders_data,
+            'drive_files': all_files,
+            'drive_error': None,
+        }
     except Exception as e:
-        return render_template('portal/drive_sync.html',
-                               sync_status='error',
-                               stats={'total_imports': 0, 'total_errors': 0, 'files_tracked': 0},
-                               all_files=[], folders=DRIVE_FOLDERS,
-                               alert_count=alert_count,
-                               error=str(e))
+        from modules.drive_sync import DRIVE_FOLDERS
+        return {
+            'sync_status': 'error',
+            'sync_stats':  {'total_imports': 0, 'total_errors': 0, 'files_tracked': 0},
+            'folders':     DRIVE_FOLDERS,
+            'drive_files': [],
+            'drive_error': str(e),
+        }
+
+
+@app.route('/database')
+def database_page():
+    """Unified database management page — upload, Drive Sync, and Google Sheets tabs."""
+    alert_count     = ds.get_unacknowledged_count()
+    db_health       = ds.get_db_health_stats()
+    all_reports     = ds.get_all_reports()
+    recent_activity = ds.get_activity_log(limit=20)
+
+    # Sheets auth method
+    try:
+        from modules.sheets import sheets_auth_method
+        sheets_auth = sheets_auth_method()
+    except Exception:
+        sheets_auth = None
+
+    drive_data = _build_drive_data()
+
+    return render_template(
+        'portal/database.html',
+        alert_count=alert_count,
+        db_health=db_health,
+        all_reports=all_reports,
+        recent_activity=recent_activity,
+        sheets_auth=sheets_auth,
+        **drive_data,
+    )
+
+
+# ── DB Import API (upload → pipeline → DB, no PDFs) ────────────────────────────
+
+@app.route('/api/db_import', methods=['POST'])
+def api_db_import():
+    """
+    Import one or more Excel/CSV files directly into the database without generating PDFs.
+    Supports both combined (Brand Partner column) and per-brand Tally wide-format files.
+    """
+    uploaded = request.files.getlist('files[]')
+    if not uploaded:
+        return jsonify({'success': False, 'error': 'No files provided'}), 400
+
+    start_date  = request.form.get('start_date', '').strip() or None
+    end_date    = request.form.get('end_date',   '').strip() or None
+    format_hint = request.form.get('format_hint', 'auto')
+    merge_mode  = request.form.get('merge_mode', 'replace')
+
+    # Buffer all files in memory before the thread starts
+    file_buffers = []
+    for f in uploaded:
+        buf = io.BytesIO(f.read())
+        buf.name = f.filename
+        file_buffers.append((f.filename, buf))
+
+    job_id = uuid.uuid4().hex
+    ds.create_job(job_id)
+
+    def _run():
+        try:
+            from modules.ingestion import load_and_clean, load_brand_file, filter_by_date, split_by_brand
+            from modules.kpi import calculate_kpis, calculate_perf_score
+            from modules.alerts import check_and_save_alerts, run_portfolio_alerts
+            from modules.drive_sync import (
+                _run_pipeline_from_df, _extract_brand_from_filename, DateExtractor
+            )
+            import calendar as _cal
+
+            ds.update_job(job_id, status='running', total=len(file_buffers),
+                          current_brand='Loading files...')
+
+            combined_dfs, brand_dfs, errors = [], [], []
+
+            for fname, buf in file_buffers:
+                buf.seek(0)
+                try:
+                    if format_hint in ('combined', 'auto'):
+                        try:
+                            df = load_and_clean(buf)
+                            combined_dfs.append(df)
+                            continue
+                        except Exception:
+                            if format_hint == 'combined':
+                                raise
+                    buf.seek(0)
+                    brand_name = _extract_brand_from_filename(fname) or fname
+                    df = load_brand_file(buf, brand_name)
+                    if not df.empty:
+                        brand_dfs.append(df)
+                except Exception as e:
+                    errors.append(f'{fname}: {e}')
+
+            dfs = combined_dfs if combined_dfs else brand_dfs
+            if not dfs:
+                ds.update_job(job_id, status='error',
+                              error_msg=f'No data loaded. Errors: {errors[:3]}')
+                return
+
+            import pandas as _pd
+            combined = _pd.concat(dfs, ignore_index=True)
+
+            # Determine date range
+            if start_date and end_date:
+                s, e = start_date, end_date
+            else:
+                s, e = DateExtractor.from_excel_content(combined)
+
+            if not s or not e:
+                ds.update_job(job_id, status='error',
+                              error_msg='Could not determine date range. Please provide start/end dates.')
+                return
+
+            ds.update_job(job_id, current_brand=f'Importing {s} -> {e}...')
+
+            if merge_mode == 'additive':
+                # Per-brand additive merge
+                from modules.ingestion import filter_by_date as _fbd, split_by_brand as _sbb
+                df_filtered  = _fbd(combined, s, e)
+                brand_data   = _sbb(df_filtered)
+                brands       = list(brand_data.keys())
+                all_kpis     = {b: calculate_kpis(brand_data[b]) for b in brands}
+                total_rev    = sum(k['total_revenue'] for k in all_kpis.values())
+                avg_rev      = total_rev / max(len(brands), 1)
+                for b in brands:
+                    all_kpis[b]['perf_score'] = calculate_perf_score(all_kpis[b], avg_rev)
+                existing = ds.get_report_by_date_range(s, e)
+                if existing:
+                    report_id = existing['id']
+                    for b in brands:
+                        ds.clear_brand_from_report(report_id, b)
+                else:
+                    total_qty = sum(k['total_qty'] for k in all_kpis.values())
+                    all_stores: set = set()
+                    for k in all_kpis.values():
+                        if k.get('top_stores') is not None and not k['top_stores'].empty:
+                            all_stores.update(k['top_stores']['Store'].tolist())
+                    report_id = ds.save_report(
+                        start_date=s, end_date=e, xls_filename='db_import_additive',
+                        total_revenue=total_rev, total_qty=total_qty,
+                        total_stores=len(all_stores), brand_count=len(brands),
+                    )
+                for b in brands:
+                    k = all_kpis[b]
+                    share = round(k['total_revenue'] / max(total_rev, 1) * 100, 2)
+                    ds.save_brand_kpis(report_id, b, k, k.get('perf_score', {}), share)
+                    if not k['daily_sales'].empty:
+                        ds.save_daily_sales(report_id, b, k['daily_sales'])
+                    history = ds.get_brand_history(b, limit=3)
+                    check_and_save_alerts(report_id, b, k, avg_rev, history[1:], ds)
+                run_portfolio_alerts(report_id, ds.get_all_brand_kpis(report_id), ds)
+            else:
+                result = _run_pipeline_from_df(combined, 'db_import_upload', s, e, ds)
+                report_id = result.get('report_id')
+
+            ds.log_activity('db_import_upload',
+                            detail=f'{len(file_buffers)} file(s), {s} -> {e}, mode={merge_mode}')
+            ds.update_job(job_id, status='done', progress=100,
+                          current_brand=f'Complete — {s} to {e}',
+                          report_id=report_id)
+        except Exception as ex:
+            ds.update_job(job_id, status='error', error_msg=str(ex))
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'success': True, 'job_id': job_id})
+
+
+@app.route('/api/db_import/job/<job_id>')
+def api_db_import_job(job_id):
+    """Poll status of a db_import job."""
+    job = ds.get_job(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+    return jsonify(job)
+
+
+@app.route('/api/db_import_sheet/preview', methods=['POST'])
+def api_db_import_sheet_preview():
+    """Preview a Google Sheet before importing — returns columns, row count, brands."""
+    data = request.get_json(silent=True) or {}
+    sheet_id = data.get('sheet_id', '').strip()
+    tab_name = data.get('tab_name', '').strip() or None
+    if not sheet_id:
+        return jsonify({'success': False, 'error': 'sheet_id required'}), 400
+    try:
+        from modules.sheets import pull_sheet_as_df
+        df = pull_sheet_as_df(sheet_id, tab_name)
+        brands = sorted(df['Brand Partner'].dropna().unique().tolist()) if 'Brand Partner' in df.columns else []
+        date_min = str(df['Date'].min().date()) if 'Date' in df.columns else ''
+        date_max = str(df['Date'].max().date()) if 'Date' in df.columns else ''
+        return jsonify({
+            'success':    True,
+            'columns':    df.columns.tolist(),
+            'row_count':  len(df),
+            'brands':     brands,
+            'date_range': f'{date_min} to {date_max}' if date_min else 'unknown',
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/db_import_sheet', methods=['POST'])
+def api_db_import_sheet():
+    """Import a Google Sheet into the database."""
+    data       = request.get_json(silent=True) or {}
+    sheet_id   = data.get('sheet_id', '').strip()
+    start_date = data.get('start_date', '').strip() or None
+    end_date   = data.get('end_date',   '').strip() or None
+    tab_name   = data.get('tab_name',   '').strip() or None
+    merge_mode = data.get('merge_mode', 'replace')
+    if not sheet_id:
+        return jsonify({'success': False, 'error': 'sheet_id required'}), 400
+
+    job_id = uuid.uuid4().hex
+    ds.create_job(job_id)
+
+    def _run():
+        try:
+            from modules.sheets import pull_sheet_as_df
+            from modules.drive_sync import _run_pipeline_from_df, DateExtractor
+            ds.update_job(job_id, status='running', current_brand='Fetching Google Sheet...')
+            df = pull_sheet_as_df(sheet_id, tab_name)
+            s, e = start_date, end_date
+            if not s or not e:
+                s, e = DateExtractor.from_excel_content(df)
+            if not s or not e:
+                ds.update_job(job_id, status='error',
+                              error_msg='Could not determine date range.')
+                return
+            result = _run_pipeline_from_df(df, f'sheets:{sheet_id[:20]}', s, e, ds)
+            ds.log_activity('db_import_sheet', detail=f'{sheet_id[:30]}, {s} -> {e}')
+            ds.update_job(job_id, status='done', progress=100,
+                          current_brand=f'Complete — {s} to {e}',
+                          report_id=result.get('report_id'))
+        except Exception as ex:
+            ds.update_job(job_id, status='error', error_msg=str(ex))
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'success': True, 'job_id': job_id})
 
 
 @app.route('/api/drive-sync/trigger', methods=['POST'])
