@@ -39,12 +39,41 @@ jinja_env = Environment(
 )
 
 
-def _sparkline_data(weekly_pct: list) -> list:
-    """Convert weekly percentages into bar-height + label dicts for the template."""
-    if not weekly_pct:
-        return [{'h': 3, 'label': '0%'}] * 4
-    maxv = max(weekly_pct) or 1
-    return [{'h': max(3, int(v / maxv * 22)), 'label': f'{v:.0f}%'} for v in weekly_pct]
+def _daily_sparkline_svg(daily_df, col: str = 'Revenue',
+                         color: str = '#E8192C') -> str:
+    """Generate inline SVG area+line sparkline from daily sales data."""
+    if daily_df is None or daily_df.empty or col not in daily_df.columns:
+        return ''
+    vals = [float(v) for v in daily_df[col].fillna(0).tolist()]
+    if len(vals) == 1:
+        return (
+            f'<svg viewBox="0 0 90 22" xmlns="http://www.w3.org/2000/svg" '
+            f'style="display:block;width:100%;height:22px;">'
+            f'<circle cx="45" cy="11" r="4" fill="{color}" opacity="0.7"/>'
+            f'</svg>'
+        )
+    if not vals:
+        return ''
+    W, H = 90, 22
+    maxv = max(vals) or 1
+    minv = min(vals)
+    rangev = (maxv - minv) or 1
+    n = len(vals)
+    coords = []
+    for i, v in enumerate(vals):
+        x = round(i / (n - 1) * W, 1)
+        y = round(H - 3 - ((v - minv) / rangev * (H - 8)), 1)
+        coords.append((x, y))
+    line_pts = ' '.join(f'{x},{y}' for x, y in coords)
+    fill_pts = f'0,{H} {line_pts} {W},{H}'
+    return (
+        f'<svg viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg" '
+        f'style="display:block;width:100%;height:{H}px;">'
+        f'<polygon points="{fill_pts}" fill="{color}" opacity="0.15"/>'
+        f'<polyline points="{line_pts}" fill="none" stroke="{color}" '
+        f'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>'
+        f'</svg>'
+    )
 
 
 def _build_narrative_sections(brand_name: str, kpis: dict,
@@ -53,6 +82,11 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
     start_dt   = datetime.strptime(start_date, '%Y-%m-%d')
     end_dt     = datetime.strptime(end_date,   '%Y-%m-%d')
     month_name = start_dt.strftime('%B')
+    report_days = (end_dt - start_dt).days + 1
+
+    # Determine whether this is a full month (≥22 days) or a partial/weekly report
+    is_full_month = report_days >= 22
+    weeks_elapsed = max(1, (report_days + 6) // 7)  # ceiling division
 
     next_month_num  = end_dt.month % 12 + 1
     next_month_name = _calendar.month_name[next_month_num]
@@ -67,10 +101,12 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
 
     total_rev   = float(kpis.get('total_revenue') or 0)
     total_qty   = float(kpis.get('total_qty') or 0)
-    store_count = int(kpis.get('store_count') or 0)
+    # Support both key names used in different code paths
+    store_count = int(kpis.get('num_stores') or kpis.get('store_count') or 0)
     repeat_pct  = float(kpis.get('repeat_pct') or 0)
     wow_rev     = float(kpis.get('wow_rev_change') or 0)
     stock_days  = float(kpis.get('stock_days_cover') or 0)
+    trading_days = int(kpis.get('trading_days') or report_days)
 
     weekly_rev_pct = kpis.get('weekly_rev_pct') or [0, 0, 0, 0]
 
@@ -93,63 +129,90 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
     closing_stock_df = kpis.get('closing_stock')
 
     # ── KPI bullets ───────────────────────────────────────────────────────────
+    period_desc = 'month' if is_full_month else f'first {report_days} day{"s" if report_days != 1 else ""} of {month_name}'
     kpi_bullets = [
-        f'Total Sales Revenue: {_full(total_rev)}.',
+        f'Total Sales Revenue: {_full(total_rev)} ({period_desc}).',
         f'Total Quantity Sold: {total_qty:,.2f} packs.',
         f'Sales Reach: {store_count} active supermarket{"s" if store_count != 1 else ""}.',
     ]
     if top_product_name:
-        vol_desc = 'high' if total_qty > 100 else 'moderate'
+        vol_desc = 'high' if total_qty > 100 else ('moderate' if total_qty > 20 else 'early-stage')
         kpi_bullets.append(
-            f'Customer Response: The quantity of {total_qty:,.2f} packs sold indicates {brand_name} is a '
-            f'{vol_desc}-volume brand with {top_product_name} being the primary driver.'
+            f'Customer Response: {top_product_name} is the primary revenue driver at '
+            f'{_short(top_product_rev)}, indicating {brand_name} is a {vol_desc}-volume brand.'
         )
 
     # ── Strengths ─────────────────────────────────────────────────────────────
     strengths = []
-    nonzero = [v for v in weekly_rev_pct if v > 0]
-    if len(nonzero) >= 2 and nonzero[-1] > nonzero[0]:
-        strengths.append(
-            f'Consistent Growth Trend: {brand_name} maintained a steady upward trajectory throughout '
-            f'the month, with the WoW trend growing from {nonzero[0]:.0f}% to {nonzero[-1]:.0f}%.'
-        )
-    elif wow_rev > 0:
-        strengths.append(
-            f'Positive Momentum: Revenue grew {wow_rev:+.1f}% week-over-week, '
-            f'demonstrating strong demand for {brand_name} products.'
-        )
+
+    if is_full_month:
+        nonzero = [v for v in weekly_rev_pct if v > 0]
+        if len(nonzero) >= 2 and nonzero[-1] > nonzero[0]:
+            strengths.append(
+                f'Consistent Growth Trend: {brand_name} maintained a steady upward trajectory '
+                f'across the month, with WoW revenue share growing from {nonzero[0]:.0f}% to {nonzero[-1]:.0f}%.'
+            )
+        elif wow_rev > 0:
+            strengths.append(
+                f'Positive Momentum: Revenue grew {wow_rev:+.1f}% week-over-week in the final week, '
+                f'demonstrating strong closing momentum for {brand_name}.'
+            )
+    else:
+        # Partial month: focus on what happened in the first N days
+        if total_rev > 0 and trading_days > 0:
+            daily_avg = total_rev / trading_days
+            projected = daily_avg * 28
+            strengths.append(
+                f'Opening Momentum: {brand_name} generated {_full(total_rev)} in the first '
+                f'{report_days} day{"s" if report_days != 1 else ""}, implying a {_short(projected)} '
+                f'monthly run rate if this pace holds.'
+            )
 
     if top_product_name and top_product_rev > 0 and total_rev > 0:
         pct = top_product_rev / total_rev * 100
         strengths.append(
-            f'Product Market Leader: {top_product_name} accounts for {pct:.0f}% of total revenue '
+            f'Product Market Leader: {top_product_name} accounts for {pct:.0f}% of revenue '
             f'at {_short(top_product_rev)}.'
         )
 
     if top_store_name and top_store_rev > 0:
         strengths.append(
-            f'Retail Anchor: {top_store_name} is a primary driver of volume, '
+            f'Retail Anchor: {top_store_name} is the primary distribution point, '
             f'contributing {_short(top_store_rev)}.'
         )
 
-    if repeat_pct >= 50:
+    if is_full_month and repeat_pct >= 50:
         strengths.append(
             f'Strong Loyalty: {repeat_pct:.0f}% repeat order rate demonstrates solid customer retention.'
         )
 
     if not strengths:
         strengths.append(
-            f'{brand_name} demonstrated consistent sales activity across the reporting period.'
+            f'{brand_name} registered sales activity during the reporting period. '
+            f'More data is needed to identify clear trend patterns.'
         )
 
     # ── Gaps ──────────────────────────────────────────────────────────────────
     gaps = []
+
+    if store_count < 5 and not is_full_month:
+        gaps.append(
+            f'Limited Distribution: Only {store_count} store{"s" if store_count != 1 else ""} '
+            f'active in the first {report_days} day{"s" if report_days != 1 else ""}. '
+            f'Significantly more outlets need to be activated to build meaningful sales volume.'
+        )
+    elif store_count < 10 and is_full_month:
+        gaps.append(
+            f'Narrow Distribution Base: {store_count} active stores is below the threshold for '
+            f'sustainable revenue. Expanding reach is the highest-priority growth lever.'
+        )
+
     if (bottom_product_name and bottom_product_rev > 0
             and top_product_rev > 0 and bottom_product_rev < top_product_rev * 0.3):
         gaps.append(
-            f'Underperforming SKUs: {bottom_product_name} ({_short(bottom_product_rev)}) contributes '
-            f'significantly less to the revenue mix than the top performer, '
-            f'{top_product_name} ({_short(top_product_rev)}).'
+            f'SKU Revenue Gap: {bottom_product_name} ({_short(bottom_product_rev)}) contributes '
+            f'significantly less than the lead SKU, {top_product_name} ({_short(top_product_rev)}). '
+            f'Review placement and pricing of underperforming variants.'
         )
 
     if closing_stock_df is not None and not closing_stock_df.empty:
@@ -157,72 +220,129 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
         if not low.empty:
             sku_names = ' and '.join(low['SKU'].tolist()[:2])
             gaps.append(
-                f'Inventory Imbalance: Stock for {sku_names} is critically low, '
-                f'creating a risk of lost sales.'
+                f'Low Inventory: {sku_names} {"have" if " and " in sku_names else "has"} fewer '
+                f'than 10 packs in stock, which may restrict sales if demand picks up.'
             )
 
-    if 0 < stock_days < 14:
+    if 0 < stock_days < 14 and is_full_month:
         gaps.append(
-            f'Stock Cover Risk: Current inventory covers only {stock_days:.0f} days at the present '
-            f'sales rate. Urgent replenishment is recommended.'
+            f'Stock Cover Risk: At {stock_days:.0f} days of remaining cover, inventory replenishment '
+            f'must be initiated immediately to avoid stockouts next month.'
         )
 
-    if repeat_pct < 40 and store_count > 0:
+    if is_full_month and repeat_pct < 40 and store_count > 0:
         gaps.append(
-            f'Low Repeat Rate: At {repeat_pct:.0f}%, the repeat ordering rate is below the 40% '
-            f'benchmark, suggesting distribution gaps or inconsistent stock availability.'
+            f'Low Repeat Rate: {repeat_pct:.0f}% repeat ordering is below the 40% benchmark, '
+            f'suggesting inconsistent stock availability or weak demand at current outlets.'
         )
 
     if not gaps:
         gaps.append(
-            'No critical performance gaps identified. Monitor inventory levels and maintain '
-            'current distribution reach.'
+            'No critical performance gaps identified for this period. '
+            'Continue monitoring inventory levels and distribution activity.'
         )
 
     # ── Recommendations ───────────────────────────────────────────────────────
     recs = []
-    if closing_stock_df is not None and not closing_stock_df.empty:
-        low = closing_stock_df[closing_stock_df['Closing Stock (Cartons)'] < 10]
-        for _, row in low.head(2).iterrows():
-            needed = max(10, int(row['Closing Stock (Cartons)'] or 0) * 4)
+
+    if is_full_month:
+        # Full month → strategic recommendations for NEXT month
+        rec_label = f'{next_month_name} Recommendations'
+
+        # Stock replenishment
+        if closing_stock_df is not None and not closing_stock_df.empty:
+            low = closing_stock_df[closing_stock_df['Closing Stock (Cartons)'] < 10]
+            for _, row in low.head(2).iterrows():
+                needed = max(10, int(row['Closing Stock (Cartons)'] or 0) * 4)
+                recs.append(
+                    f'Stock Optimization: Deliver at least {needed} packs of {row["SKU"]} to the '
+                    f'warehouse before {next_month_name} begins to meet anticipated demand.'
+                )
+
+        # Underperformer promotion
+        if (bottom_product_name and top_product_rev > 0
+                and bottom_product_rev < top_product_rev * 0.3):
             recs.append(
-                f'Stock Optimization: Deliver a minimum of {needed} packs of {row["SKU"]} to the '
-                f'warehouse to align stock levels with current demand.'
+                f'Variant Promotion: Develop a bundle or discount offer for {bottom_product_name} '
+                f'in {next_month_name} to lift its revenue contribution and inventory turnover.'
             )
 
-    if (bottom_product_name and top_product_rev > 0
-            and bottom_product_rev < top_product_rev * 0.3):
-        recs.append(
-            f'Variant Promotion: Implement a "bundle" or discount strategy for '
-            f'{bottom_product_name} to increase its market share and inventory turnover.'
-        )
+        # Store expansion
+        if store_count < 30:
+            recs.append(
+                f'Distribution Expansion: Target at least {store_count + 8} active stores in '
+                f'{next_month_name} to reduce single-store revenue concentration risk.'
+            )
 
-    if store_count < 30:
-        recs.append(
-            f'Distribution Expansion: Target at least {store_count + 8} active stores in '
-            f'{next_month_name} to broaden reach and reduce revenue concentration risk.'
-        )
+        # Retention
+        if repeat_pct < 40:
+            recs.append(
+                f'Retention Drive: Re-engage the {store_count} current stores with targeted '
+                f'incentives to push the repeat order rate above 50% in {next_month_name}.'
+            )
 
-    if repeat_pct < 40:
-        recs.append(
-            f'Retention Drive: Engage the {store_count} active stores with targeted promotional '
-            f'incentives to improve the repeat order rate above 50%.'
+    else:
+        # Partial month → actionable focus items for the REMAINDER of this month
+        rec_label = f'{month_name} Recommendations'
+        week_label = (
+            'Week 1' if weeks_elapsed == 1 else
+            f'Week {weeks_elapsed}'
         )
+        remaining_weeks = max(1, 4 - weeks_elapsed)
+
+        # Distribution push is almost always the top priority early in the month
+        if store_count < 15:
+            target = max(store_count * 3, store_count + 10)
+            recs.append(
+                f'Distribution Drive: With only {store_count} store{"s" if store_count != 1 else ""} '
+                f'active after {week_label}, aggressively target at least {target} stores across the '
+                f'remaining {remaining_weeks} week{"s" if remaining_weeks != 1 else ""} of {month_name}.'
+            )
+
+        # Urgent stock replenishment (more critical for early-month since sales will ramp)
+        if closing_stock_df is not None and not closing_stock_df.empty:
+            low = closing_stock_df[closing_stock_df['Closing Stock (Cartons)'] < 10]
+            for _, row in low.head(2).iterrows():
+                needed = max(15, int(row['Closing Stock (Cartons)'] or 0) * 5)
+                recs.append(
+                    f'Immediate Restock: {row["SKU"]} has fewer than 10 packs remaining. '
+                    f'Replenish with at least {needed} packs now — demand is likely to grow '
+                    f'as more stores activate this month.'
+                )
+
+        # Re-engage early stores for repeat orders
+        if top_store_name:
+            recs.append(
+                f'Account Development: Follow up with {top_store_name} and other {week_label} '
+                f'purchasers to secure repeat orders and gather intel on in-store demand.'
+            )
+
+        # Pacing awareness with projected monthly revenue
+        if total_rev > 0 and trading_days > 0:
+            daily_avg   = total_rev / trading_days
+            projected   = daily_avg * 28
+            recs.append(
+                f'Monthly Pacing: Current {week_label} revenue ({_full(total_rev)}) projects a '
+                f'{_short(projected)} monthly total. Accelerate store activation to close any '
+                f'gap against targets before month-end.'
+            )
 
     if not recs:
         recs.append(
-            f'Maintain current performance levels and focus on expanding distribution reach '
-            f'in {next_month_name}.'
+            f'Build on current momentum by expanding distribution and ensuring adequate '
+            f'stock levels throughout the remainder of {month_name}.'
         )
 
     return {
         'report_title':     f'{month_name} Monthly Sales Report For {brand_name}',
         'period_label':     f'{month_name} KPIs',
-        'next_month_label': f'{next_month_name} Recommendations',
+        'next_month_label': rec_label,
         'kpi_bullets':      kpi_bullets,
         'strengths':        strengths,
         'gaps':             gaps,
         'recommendations':  recs,
+        'is_full_month':    is_full_month,
+        'report_days':      report_days,
     }
 
 
@@ -311,14 +431,24 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
             logo_data = f"data:image/jpeg;base64,{base64.b64encode(f.read()).decode()}"
 
     # ── Pre-computed display values ─────────────────────────────────────────────
-    revenue_display   = f'\u20a6{kpis["total_revenue"]:,.2f}'
-    qty_display       = f'{kpis["total_qty"]:,.2f}'
+    revenue_display = f'\u20a6{kpis["total_revenue"]:,.2f}'
+    qty_display     = f'{kpis["total_qty"]:,.2f}'
+    num_stores      = int(kpis.get('num_stores') or kpis.get('store_count') or 0)
 
-    cs = kpis.get('closing_stock')
-    inventory_total   = f'{cs["Closing Stock (Cartons)"].sum():.1f}' if cs is not None and not cs.empty else '0.0'
+    # Total closing stock — prefer direct scalar key, fall back to summing the DataFrame
+    total_stock_val = float(
+        kpis.get('total_closing_stock') or kpis.get('closing_stock_total') or 0
+    )
+    if total_stock_val == 0:
+        cs = kpis.get('closing_stock')
+        if cs is not None and not cs.empty:
+            total_stock_val = float(cs['Closing Stock (Cartons)'].sum())
+    inventory_total = f'{total_stock_val:.1f}'
 
-    rev_sparkline = _sparkline_data(kpis.get('weekly_rev_pct') or [0, 0, 0, 0])
-    qty_sparkline = _sparkline_data(kpis.get('weekly_qty_pct') or [0, 0, 0, 0])
+    # Daily sparkline SVGs (area+line, adapts to any report length)
+    daily_df = kpis.get('daily_sales')
+    rev_sparkline_svg = _daily_sparkline_svg(daily_df, col='Revenue',  color='#E8192C')
+    qty_sparkline_svg = _daily_sparkline_svg(daily_df, col='Quantity', color='#1B2B5E')
 
     # ── Render template ────────────────────────────────────────────────────────
     template = jinja_env.get_template('report_template.html')
@@ -336,8 +466,9 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
         revenue_display=revenue_display,
         qty_display=qty_display,
         inventory_total=inventory_total,
-        rev_sparkline=rev_sparkline,
-        qty_sparkline=qty_sparkline,
+        num_stores=num_stores,
+        rev_sparkline_svg=rev_sparkline_svg,
+        qty_sparkline_svg=qty_sparkline_svg,
         dual_trend_chart=dual_trend_chart,
         stock_chart=stock_chart,
         reorder_chart=reorder_chart,
