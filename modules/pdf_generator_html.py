@@ -218,126 +218,172 @@ def prepare_interactive_html_for_pdf(html_content: str) -> str:
     return INTERACTIVE_PDF_PRINT_OVERRIDES + html_content
 
 
-def render_pdf_bytes(html_content: str) -> bytes:
-    """Render PDF bytes from already-built HTML."""
-    browsers_path = os.getenv('PLAYWRIGHT_BROWSERS_PATH')
-    launch_options = {
-        'headless': True,
-        'args': ['--no-sandbox', '--disable-dev-shm-usage'],
-    }
-    with sync_playwright() as p:
-        browser = None
-        launch_errors = []
+# ── Persistent Chromium browser (launched once, reused for every PDF request) ──
+import threading as _threading
 
-        def _launch(executable_path=None):
-            opts = dict(launch_options)
-            if executable_path:
-                opts['executable_path'] = executable_path
-            return p.chromium.launch(**opts)
+_browser_lock = _threading.Lock()   # serialise page rendering across threads
+_pw_instance  = None                # playwright handle
+_browser_inst = None                # chromium browser handle
 
-        def _candidate_paths():
-            shell_candidates = []
-            if os.name != 'nt':
-                try:
-                    probe = subprocess.run(
-                        [
-                            '/bin/sh', '-lc',
-                            "command -v chromium || command -v chromium-browser || command -v google-chrome || "
-                            "command -v .chromium-wrapped || "
-                            "find /nix/store -type f \\( -name chromium -o -name chromium-browser -o -name google-chrome -o -name .chromium-wrapped \\) 2>/dev/null | head -n 20"
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=15,
-                        check=False,
-                    )
-                    shell_candidates = [line.strip() for line in probe.stdout.splitlines() if line.strip()]
-                except Exception:
-                    shell_candidates = []
 
-            nix_candidates = []
-            for pattern in (
-                '/nix/store/*/bin/chromium',
-                '/nix/store/*/bin/chromium-browser',
-                '/nix/store/*/bin/google-chrome',
-                '/nix/store/*/bin/.chromium-wrapped',
-                '/nix/store/*chromium*/bin/chromium',
-                '/nix/store/*chromium*/bin/chromium-browser',
-                '/nix/store/*chromium*/bin/.chromium-wrapped',
-                '/nix/var/nix/profiles/default/bin/chromium',
-                '/etc/profiles/per-user/root/bin/chromium',
-                '/run/current-system/sw/bin/chromium',
-            ):
-                nix_candidates.extend(glob.glob(pattern))
-
-            candidates = [
-                os.getenv('PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'),
-                shutil.which('chromium'),
-                shutil.which('chromium-browser'),
-                shutil.which('google-chrome'),
-                shutil.which('.chromium-wrapped'),
-                '/usr/bin/chromium',
-                '/usr/bin/chromium-browser',
-                *shell_candidates,
-                *nix_candidates,
-            ]
-            seen = set()
-            ordered = []
-            for candidate in candidates:
-                if candidate and candidate not in seen:
-                    seen.add(candidate)
-                    ordered.append(candidate)
-            return ordered
-
+def _candidate_paths():
+    """Return ordered list of Chromium executable candidates to try."""
+    shell_candidates = []
+    if os.name != 'nt':
         try:
-            browser = _launch()
-        except Exception as launch_error:
-            launch_errors.append(f"default: {launch_error}")
-            candidates = _candidate_paths()
-            for candidate in candidates:
-                if candidate and os.path.exists(candidate):
-                    try:
-                        browser = _launch(executable_path=candidate)
-                        break
-                    except Exception as candidate_error:
-                        launch_errors.append(f"{candidate}: {candidate_error}")
-            if browser is None and 'playwright install' in str(launch_error).lower():
-                install_env = os.environ.copy()
-                if browsers_path:
-                    install_env['PLAYWRIGHT_BROWSERS_PATH'] = browsers_path
-                    os.makedirs(browsers_path, exist_ok=True)
-                subprocess.run(
-                    [sys.executable, '-m', 'playwright', 'install', 'chromium'],
-                    env=install_env,
-                    timeout=180,
-                    check=False,
-                )
-                try:
-                    browser = _launch()
-                except Exception as install_error:
-                    launch_errors.append(f"post-install default: {install_error}")
-                    for candidate in _candidate_paths():
-                        if candidate and os.path.exists(candidate):
-                            try:
-                                browser = _launch(executable_path=candidate)
-                                break
-                            except Exception as candidate_error:
-                                launch_errors.append(f"post-install {candidate}: {candidate_error}")
-            if browser is None:
-                raise RuntimeError(
-                    "Unable to launch chromium for PDF rendering. "
-                    f"Candidates checked: {_candidate_paths()}. "
-                    f"Errors: {' | '.join(launch_errors[:6])}"
-                )
-        page = browser.new_page()
-        page.set_content(html_content, wait_until='networkidle')
-        pdf_bytes = page.pdf(
-            format='A4',
-            print_background=True,
-            margin={'top': '0mm', 'right': '0mm', 'bottom': '0mm', 'left': '0mm'},
+            probe = subprocess.run(
+                [
+                    '/bin/sh', '-lc',
+                    "command -v chromium || command -v chromium-browser || "
+                    "command -v google-chrome || command -v .chromium-wrapped || "
+                    "find /nix/store -type f \\( -name chromium -o -name chromium-browser "
+                    "-o -name google-chrome -o -name .chromium-wrapped \\) 2>/dev/null | head -n 20"
+                ],
+                capture_output=True, text=True, timeout=15, check=False,
+            )
+            shell_candidates = [l.strip() for l in probe.stdout.splitlines() if l.strip()]
+        except Exception:
+            pass
+
+    nix_candidates = []
+    for pattern in (
+        '/nix/store/*/bin/chromium',
+        '/nix/store/*/bin/chromium-browser',
+        '/nix/store/*/bin/google-chrome',
+        '/nix/store/*/bin/.chromium-wrapped',
+        '/nix/store/*chromium*/bin/chromium',
+        '/nix/store/*chromium*/bin/chromium-browser',
+        '/nix/store/*chromium*/bin/.chromium-wrapped',
+        '/nix/var/nix/profiles/default/bin/chromium',
+        '/etc/profiles/per-user/root/bin/chromium',
+        '/run/current-system/sw/bin/chromium',
+    ):
+        nix_candidates.extend(glob.glob(pattern))
+
+    raw = [
+        os.getenv('PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH'),
+        shutil.which('chromium'),
+        shutil.which('chromium-browser'),
+        shutil.which('google-chrome'),
+        shutil.which('.chromium-wrapped'),
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        *shell_candidates,
+        *nix_candidates,
+    ]
+    seen, ordered = set(), []
+    for c in raw:
+        if c and c not in seen:
+            seen.add(c)
+            ordered.append(c)
+    return ordered
+
+
+def _launch_chromium(p):
+    """Launch Chromium via playwright handle `p`, trying every fallback path."""
+    opts = {'headless': True, 'args': ['--no-sandbox', '--disable-dev-shm-usage']}
+
+    def _try(executable_path=None):
+        o = dict(opts)
+        if executable_path:
+            o['executable_path'] = executable_path
+        return p.chromium.launch(**o)
+
+    errors = []
+    needs_install = False
+
+    # 1. Default Playwright-managed browser
+    try:
+        return _try()
+    except Exception as e:
+        errors.append(f'default: {e}')
+        needs_install = 'playwright install' in str(e).lower()
+
+    # 2. Known system paths
+    for path in _candidate_paths():
+        if path and os.path.exists(path):
+            try:
+                return _try(executable_path=path)
+            except Exception as e:
+                errors.append(f'{path}: {e}')
+
+    # 3. Auto-install then retry
+    if needs_install:
+        install_env = os.environ.copy()
+        bp = os.getenv('PLAYWRIGHT_BROWSERS_PATH')
+        if bp:
+            install_env['PLAYWRIGHT_BROWSERS_PATH'] = bp
+            os.makedirs(bp, exist_ok=True)
+        subprocess.run(
+            [sys.executable, '-m', 'playwright', 'install', 'chromium'],
+            env=install_env, timeout=180, check=False,
         )
-        browser.close()
-    return pdf_bytes
+        try:
+            return _try()
+        except Exception as e:
+            errors.append(f'post-install default: {e}')
+        for path in _candidate_paths():
+            if path and os.path.exists(path):
+                try:
+                    return _try(executable_path=path)
+                except Exception as e:
+                    errors.append(f'post-install {path}: {e}')
+
+    raise RuntimeError(f'Unable to launch Chromium. Errors: {" | ".join(errors[:6])}')
+
+
+def _ensure_browser():
+    """Return the live persistent Chromium browser, (re)launching if needed."""
+    global _pw_instance, _browser_inst
+    if _browser_inst is not None:
+        try:
+            _ = _browser_inst.contexts   # lightweight health check
+            return _browser_inst
+        except Exception:
+            for obj in (_browser_inst, _pw_instance):
+                try:
+                    obj.close() if hasattr(obj, 'close') else obj.stop()
+                except Exception:
+                    pass
+            _browser_inst = None
+            _pw_instance = None
+
+    _pw_instance = sync_playwright().start()
+    _browser_inst = _launch_chromium(_pw_instance)
+    return _browser_inst
+
+
+def render_pdf_bytes(html_content: str) -> bytes:
+    """Render PDF bytes reusing a persistent Chromium instance (no cold-start per call)."""
+    global _browser_inst, _pw_instance
+    with _browser_lock:
+        for attempt in range(2):
+            try:
+                browser = _ensure_browser()
+                page = browser.new_page()
+                try:
+                    # 'load' fires once DOM + sync scripts finish — no network-idle delay
+                    page.set_content(html_content, wait_until='load')
+                    pdf_bytes = page.pdf(
+                        format='A4',
+                        print_background=True,
+                        margin={'top': '0mm', 'right': '0mm', 'bottom': '0mm', 'left': '0mm'},
+                    )
+                finally:
+                    page.close()
+                return pdf_bytes
+            except Exception:
+                if attempt == 0:
+                    # Reset and retry once on first failure
+                    for obj in (_browser_inst, _pw_instance):
+                        try:
+                            obj.close() if hasattr(obj, 'close') else obj.stop()
+                        except Exception:
+                            pass
+                    _browser_inst = None
+                    _pw_instance = None
+                else:
+                    raise
 
 
 def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,

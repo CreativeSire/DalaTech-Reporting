@@ -697,8 +697,7 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                         return False, False, "File not created"
                 except Exception as e:
                     if attempt < max_retries - 1:
-                        import time
-                        time.sleep(0.5 * (attempt + 1))  # Exponential backoff
+                        pass   # retry immediately — no sleep
                     else:
                         return False, False, str(e)
             return False, False, "Max retries exceeded"
@@ -714,8 +713,7 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                     return True, None
                 except Exception as e:
                     if attempt < max_retries - 1:
-                        import time
-                        time.sleep(0.5 * (attempt + 1))
+                        pass   # retry immediately
                     else:
                         return False, str(e)
             return False, "Max retries exceeded"
@@ -1910,56 +1908,63 @@ def _build_brand_report_pdf_bytes(report_id: int, brand_name: str,
 
 @app.route('/api/report_pdf/<int:report_id>/<path:brand_name>')
 def api_report_pdf(report_id, brand_name):
-    """Generate and serve a PDF report for a single brand from stored DB data."""
+    """Serve a PDF report — from disk if already generated, otherwise build on demand."""
     report = ds.get_report(report_id)
     if not report:
         abort(404)
+
+    safe      = _safe_name(brand_name)
+    month_tag = datetime.strptime(report['start_date'], '%Y-%m-%d').strftime('%b%Y')
+    fname     = f"{safe}_Report_{month_tag}.pdf"
+    disk_path = os.path.join(PDF_DIR, fname)
+
+    # Fast path: serve pre-generated PDF directly — no Playwright, no DB queries
+    if os.path.isfile(disk_path):
+        return send_file(disk_path, as_attachment=True, download_name=fname,
+                         mimetype='application/pdf')
+
+    # Slow path: reconstruct and generate
     kpis = _reconstruct_kpis_from_db(report_id, brand_name)
     if not kpis:
         abort(404)
 
-    all_bk          = ds.get_all_brand_kpis(report_id)
-    total_portfolio = sum(b['total_revenue'] for b in all_bk)
-    avg_portfolio   = total_portfolio / max(len(all_bk), 1)
-
-    safe = _safe_name(brand_name)
-    month_tag = datetime.strptime(report['start_date'], '%Y-%m-%d').strftime('%b%Y')
-    fname = f"{safe}_Report_{month_tag}.pdf"
-
+    all_bk = ds.get_all_brand_kpis(report_id)
     try:
         pdf_bytes = _build_brand_report_pdf_bytes(
-            report_id=report_id,
-            brand_name=brand_name,
-            report=report,
-            kpis=kpis,
-            all_brand_kpis=all_bk,
+            report_id=report_id, brand_name=brand_name,
+            report=report, kpis=kpis, all_brand_kpis=all_bk,
         )
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-    return send_file(
-        io.BytesIO(pdf_bytes),
-        as_attachment=True,
-        download_name=fname,
-        mimetype='application/pdf',
-    )
+    # Cache to disk so next request is instant
+    try:
+        with open(disk_path, 'wb') as fh:
+            fh.write(pdf_bytes)
+        return send_file(disk_path, as_attachment=True, download_name=fname,
+                         mimetype='application/pdf')
+    except Exception:
+        return send_file(io.BytesIO(pdf_bytes), as_attachment=True,
+                         download_name=fname, mimetype='application/pdf')
 
 
 @app.route('/api/report_pdf_bulk/<int:report_id>', methods=['POST'])
 def api_report_pdf_bulk(report_id):
-    """Generate a ZIP containing PDFs for all or selected brands in a report."""
+    """ZIP PDFs for all/selected brands — serves pre-generated files instantly, generates missing ones in parallel."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     report = ds.get_report(report_id)
     if not report:
         abort(404)
 
-    all_bk = ds.get_all_brand_kpis(report_id)
+    all_bk          = ds.get_all_brand_kpis(report_id)
     brands_in_order = [b['brand_name'] for b in all_bk]
-    payload = request.get_json(silent=True) or {}
+    payload         = request.get_json(silent=True) or {}
     requested_brands = payload.get('brands') or []
 
     if requested_brands:
         requested_set = set(requested_brands)
-        brands = [brand for brand in brands_in_order if brand in requested_set]
+        brands = [b for b in brands_in_order if b in requested_set]
     else:
         brands = brands_in_order
 
@@ -1967,41 +1972,57 @@ def api_report_pdf_bulk(report_id):
         return jsonify({'error': 'No brands selected for bulk download.'}), 400
 
     month_tag = datetime.strptime(report['start_date'], '%Y-%m-%d').strftime('%b%Y')
-    zip_name = (
-        f"Selected_Brand_Reports_{month_tag}.zip"
-        if requested_brands else
-        f"All_Brand_Reports_{month_tag}.zip"
-    )
-    zip_buffer = io.BytesIO()
-    failures = []
+    zip_name  = (f"Selected_Brand_Reports_{month_tag}.zip" if requested_brands
+                 else f"All_Brand_Reports_{month_tag}.zip")
 
-    with zipfile.ZipFile(zip_buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-        for brand_name in brands:
-            try:
-                pdf_bytes = _build_brand_report_pdf_bytes(
-                    report_id=report_id,
-                    brand_name=brand_name,
-                    report=report,
-                    all_brand_kpis=all_bk,
-                )
-                safe = _safe_name(brand_name)
-                archive.writestr(f'{safe}_Report_{month_tag}.pdf', pdf_bytes)
-            except Exception as exc:
-                failures.append(f'{brand_name}: {exc}')
-
-        if failures:
-            archive.writestr(
-                'DOWNLOAD_ERRORS.txt',
-                'Some reports could not be generated.\n\n' + '\n'.join(failures),
+    def _get_pdf(brand_name):
+        safe      = _safe_name(brand_name)
+        disk_path = os.path.join(PDF_DIR, f"{safe}_Report_{month_tag}.pdf")
+        # Serve from disk if available (fastest path)
+        if os.path.isfile(disk_path):
+            with open(disk_path, 'rb') as fh:
+                return brand_name, fh.read(), None
+        try:
+            pdf_bytes = _build_brand_report_pdf_bytes(
+                report_id=report_id, brand_name=brand_name,
+                report=report, all_brand_kpis=all_bk,
             )
+            # Cache to disk for future requests
+            try:
+                with open(disk_path, 'wb') as fh:
+                    fh.write(pdf_bytes)
+            except Exception:
+                pass
+            return brand_name, pdf_bytes, None
+        except Exception as exc:
+            return brand_name, None, str(exc)
+
+    # Parallel: disk reads + KPI reconstruction run concurrently;
+    # Playwright rendering is serialised internally by _browser_lock
+    results   = {}
+    failures  = []
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {pool.submit(_get_pdf, b): b for b in brands}
+        for fut in as_completed(futures):
+            brand, pdf_bytes, err = fut.result()
+            if err:
+                failures.append(f'{brand}: {err}')
+            else:
+                results[brand] = pdf_bytes
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
+        for brand_name in brands:          # preserve original order
+            if brand_name in results:
+                safe = _safe_name(brand_name)
+                archive.writestr(f'{safe}_Report_{month_tag}.pdf', results[brand_name])
+        if failures:
+            archive.writestr('DOWNLOAD_ERRORS.txt',
+                             'Some reports could not be generated.\n\n' + '\n'.join(failures))
 
     zip_buffer.seek(0)
-    return send_file(
-        zip_buffer,
-        as_attachment=True,
-        download_name=zip_name,
-        mimetype='application/zip',
-    )
+    return send_file(zip_buffer, as_attachment=True, download_name=zip_name,
+                     mimetype='application/zip')
 
 
 @app.route('/api/portfolio_pdf/<int:report_id>')
