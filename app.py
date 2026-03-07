@@ -1856,7 +1856,7 @@ def _build_brand_report_pdf_bytes(report_id: int, brand_name: str,
                                   report: dict | None = None,
                                   kpis: dict | None = None,
                                   all_brand_kpis: list | None = None) -> bytes:
-    """Build PDF bytes for a brand, preferring the interactive HTML layout."""
+    """Build PDF bytes using the premium print-optimised report template."""
     report = report or ds.get_report(report_id)
     if not report:
         raise ValueError(f'Report {report_id} not found')
@@ -1867,48 +1867,27 @@ def _build_brand_report_pdf_bytes(report_id: int, brand_name: str,
 
     all_brand_kpis = all_brand_kpis or ds.get_all_brand_kpis(report_id)
     total_portfolio = sum(b['total_revenue'] for b in all_brand_kpis)
-    avg_portfolio = total_portfolio / max(len(all_brand_kpis), 1)
+    avg_portfolio   = total_portfolio / max(len(all_brand_kpis), 1)
 
-    try:
-        interactive_html = render_html_report(
-            brand_name=brand_name,
-            kpis=kpis,
-            start_date=report['start_date'],
-            end_date=report['end_date'],
-            portfolio_avg_revenue=avg_portfolio,
-            total_portfolio_revenue=total_portfolio,
-        )
-        return render_pdf_bytes(prepare_interactive_html_for_pdf(interactive_html))
-    except Exception as html_pdf_error:
-        temp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
-                temp_path = temp_file.name
-            generate_pdf_reportlab(
-                output_path=temp_path,
-                brand_name=brand_name,
-                kpis=kpis,
-                start_date=report['start_date'],
-                end_date=report['end_date'],
-            )
-            with open(temp_path, 'rb') as fh:
-                return fh.read()
-        except Exception as fallback_error:
-            raise RuntimeError(
-                f'Interactive HTML PDF failed: {html_pdf_error}; '
-                f'ReportLab fallback failed: {fallback_error}'
-            ) from fallback_error
-        finally:
-            if temp_path and os.path.exists(temp_path):
-                try:
-                    os.unlink(temp_path)
-                except OSError:
-                    pass
+    # Use the premium 2-page print template (report_template.html)
+    html = render_pdf_report_html(
+        brand_name=brand_name,
+        kpis=kpis,
+        start_date=report['start_date'],
+        end_date=report['end_date'],
+        portfolio_avg_revenue=avg_portfolio,
+        total_portfolio_revenue=total_portfolio,
+    )
+    return render_pdf_bytes(html)
+
+
+_REPORT_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), 'templates', 'report_template.html')
+_REPORT_TEMPLATE_MTIME = os.path.getmtime(_REPORT_TEMPLATE_PATH) if os.path.isfile(_REPORT_TEMPLATE_PATH) else 0
 
 
 @app.route('/api/report_pdf/<int:report_id>/<path:brand_name>')
 def api_report_pdf(report_id, brand_name):
-    """Serve a PDF report — from disk if already generated, otherwise build on demand."""
+    """Serve a PDF report — from disk if fresh, otherwise build with the current template."""
     report = ds.get_report(report_id)
     if not report:
         abort(404)
@@ -1918,8 +1897,8 @@ def api_report_pdf(report_id, brand_name):
     fname     = f"{safe}_Report_{month_tag}.pdf"
     disk_path = os.path.join(PDF_DIR, fname)
 
-    # Fast path: serve pre-generated PDF directly — no Playwright, no DB queries
-    if os.path.isfile(disk_path):
+    # Fast path: serve pre-generated PDF only if it was built after the current template
+    if os.path.isfile(disk_path) and os.path.getmtime(disk_path) >= _REPORT_TEMPLATE_MTIME:
         return send_file(disk_path, as_attachment=True, download_name=fname,
                          mimetype='application/pdf')
 
