@@ -19,7 +19,10 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dala_data.db')
+# Allow overriding via env var so a Railway Volume can be used for persistence.
+# On Railway: set DATABASE_PATH=/data/dala_data.db and mount a Volume at /data
+_default_db = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dala_data.db')
+DB_PATH = os.environ.get('DATABASE_PATH', _default_db)
 
 
 class DataStore:

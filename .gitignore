@@ -20,8 +20,7 @@ env/
 .env.local
 .env.production
 
-# Database (local — ephemeral on Railway)
-dala_data.db
+# Database WAL/SHM temp files (dala_data.db is committed as seed data)
 *.db-shm
 *.db-wal
 
