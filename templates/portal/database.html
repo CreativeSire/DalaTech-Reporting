@@ -136,6 +136,15 @@
     font-size: 12px; font-weight: 600; color: var(--muted); transition: all .15s;
   }
   .mode-opt input:checked + label { border-color: var(--navy); color: var(--navy); background: rgba(27,43,94,.06); }
+  .report-table { width:100%; border-collapse:collapse; font-size:12px; }
+  .report-table th, .report-table td { padding:10px 8px; border-bottom:1px solid var(--gray); vertical-align:top; }
+  .report-table th { text-align:left; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; font-size:10px; }
+  .report-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+  .type-pill {
+    display:inline-flex; align-items:center; gap:4px; padding:3px 8px;
+    border-radius:999px; font-size:10px; font-weight:700; text-transform:uppercase;
+    background:var(--bg); color:var(--navy);
+  }
 </style>
 {% endblock %}
 
@@ -499,6 +508,64 @@
   </div>
 
 </div><!-- /two-col -->
+
+<!-- Stored Reports -->
+<div class="card" style="margin-bottom:24px;">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+    <div>
+      <h4 style="color:var(--navy);margin-bottom:4px;">Stored Periods</h4>
+      <p class="text-muted fs-sm">Upload adds data. These controls let Admin remove a whole period or a single brand from a period.</p>
+    </div>
+  </div>
+
+  {% if all_reports %}
+  <div style="overflow-x:auto;">
+    <table class="report-table">
+      <thead>
+        <tr>
+          <th>Period</th>
+          <th>Source</th>
+          <th>Brands</th>
+          <th>Revenue</th>
+          <th style="text-align:right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for report in all_reports %}
+        <tr>
+          <td>
+            <div style="font-weight:700;color:var(--navy);">{{ report.month_label }}</div>
+            <div class="text-muted fs-sm">{{ report.start_date }} to {{ report.end_date }}</div>
+            <div class="type-pill" style="margin-top:6px;">{{ report.report_type or 'custom' }}</div>
+          </td>
+          <td>
+            <div style="font-weight:600;">{{ report.xls_filename or 'Manual import' }}</div>
+            <div class="text-muted fs-sm">Generated {{ report.generated_at[:16] if report.generated_at else '—' }}</div>
+          </td>
+          <td>
+            <div style="font-weight:700;">{{ report.brand_count }}</div>
+            <div class="text-muted fs-sm">brands</div>
+          </td>
+          <td>
+            <div style="font-weight:700;">₦{{ report.total_revenue | money2 }}</div>
+            <div class="text-muted fs-sm">{{ "{:,.1f}".format(report.total_qty or 0) }} packs</div>
+          </td>
+          <td>
+            <div class="report-actions">
+              <a href="/dashboard?report_id={{ report.id }}" class="btn btn-sm btn-outline">View</a>
+              <button class="btn btn-sm btn-outline" onclick='removeBrandFromReport({{ report.id }}, {{ report.month_label|tojson }})'>Remove Brand</button>
+              <button class="btn btn-sm" style="background:rgba(232,25,44,.08);color:var(--red);border:1px solid rgba(232,25,44,.15);" onclick='deleteReport({{ report.id }}, {{ report.month_label|tojson }})'>Delete Period</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-muted fs-sm">No stored periods yet.</p>
+  {% endif %}
+</div>
 
 <!-- Activity Timeline -->
 <div class="card">
@@ -880,6 +947,50 @@ async function importSheet() {
     })).json();
     if (!data.success) { hideToast(); alert('Error: ' + data.error); return; }
     pollToast('/api/db_import/job/' + data.job_id);
+  } catch (e) {
+    hideToast();
+    alert('Network error: ' + e.message);
+  }
+}
+
+async function deleteReport(reportId, monthLabel) {
+  if (!confirm(`Delete ${monthLabel} from the database? This removes its dashboard, history, forecasts, alerts, and report data.`)) return;
+  showToast('Deleting period…', 20, monthLabel);
+  try {
+    const res = await fetch(`/api/database/report/${reportId}/delete`, { method: 'POST' });
+    const data = await res.json();
+    if (!data.success) {
+      hideToast();
+      alert(data.error || 'Delete failed');
+      return;
+    }
+    showToast('✓ Period deleted', 100, monthLabel);
+    setTimeout(() => location.reload(), 700);
+  } catch (e) {
+    hideToast();
+    alert('Network error: ' + e.message);
+  }
+}
+
+async function removeBrandFromReport(reportId, monthLabel) {
+  const brandName = prompt(`Enter the brand name to remove from ${monthLabel}.`);
+  if (!brandName) return;
+  if (!confirm(`Remove ${brandName} from ${monthLabel}?`)) return;
+  showToast('Removing brand…', 35, `${brandName} · ${monthLabel}`);
+  try {
+    const res = await fetch(`/api/database/report/${reportId}/remove_brand`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brand_name: brandName }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      hideToast();
+      alert(data.error || 'Could not remove brand');
+      return;
+    }
+    showToast('✓ Brand removed', 100, `${brandName} · ${monthLabel}`);
+    setTimeout(() => location.reload(), 700);
   } catch (e) {
     hideToast();
     alert('Network error: ' + e.message);

@@ -2000,7 +2000,8 @@ class DataStore:
         """Remove one brand's data from a report without touching other brands.
         Used for additive merge mode — lets you add/update individual brands."""
         with self._connect() as conn:
-            for table in ('alerts', 'brand_kpis', 'daily_sales', 'brand_detail_json'):
+            for table in ('alerts', 'brand_kpis', 'daily_sales', 'brand_detail_json',
+                          'brand_forecast_history', 'store_churn'):
                 conn.execute(
                     f"DELETE FROM {table} WHERE report_id=? AND brand_name=?",
                     (report_id, brand_name)

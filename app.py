@@ -3018,6 +3018,51 @@ def api_db_import_job(job_id):
     return jsonify(job)
 
 
+@app.route('/api/database/report/<int:report_id>/delete', methods=['POST'])
+def api_database_delete_report(report_id):
+    """Admin: delete a full stored period and all derived rows."""
+    report = ds.get_report(report_id)
+    if not report:
+        return jsonify({'success': False, 'error': 'Report not found'}), 404
+
+    if not ds.delete_report(report_id):
+        return jsonify({'success': False, 'error': 'Delete failed'}), 500
+
+    ds.log_activity(
+        'db_report_delete',
+        detail=f"Deleted {report['month_label']} ({report['start_date']} to {report['end_date']})",
+        report_id=None,
+    )
+    return jsonify({'success': True})
+
+
+@app.route('/api/database/report/<int:report_id>/remove_brand', methods=['POST'])
+def api_database_remove_brand(report_id):
+    """Admin: remove one brand from a stored period, then refresh rollups."""
+    report = ds.get_report(report_id)
+    if not report:
+        return jsonify({'success': False, 'error': 'Report not found'}), 404
+
+    payload = request.get_json(silent=True) or {}
+    brand_name = str(payload.get('brand_name', '')).strip()
+    if not brand_name:
+        return jsonify({'success': False, 'error': 'Brand name is required'}), 400
+
+    if not ds.get_brand_kpis_single(report_id, brand_name):
+        return jsonify({'success': False, 'error': f'Brand not found in {report["month_label"]}'}), 404
+
+    for member in ds._get_brand_family_names(brand_name):
+        ds.clear_brand_from_report(report_id, member)
+    ds.refresh_report_totals(report_id)
+    ds.log_activity(
+        'db_brand_remove',
+        detail=f"Removed {ds.analytics_brand_name(brand_name)} from {report['month_label']}",
+        brand_name=ds.analytics_brand_name(brand_name),
+        report_id=report_id,
+    )
+    return jsonify({'success': True})
+
+
 @app.route('/api/db_import_sheet/preview', methods=['POST'])
 def api_db_import_sheet_preview():
     """Preview a Google Sheet before importing — returns columns, row count, brands."""
