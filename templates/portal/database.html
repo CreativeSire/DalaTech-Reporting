@@ -467,6 +467,19 @@
       <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:rgba(192,146,42,.3);margin-right:4px;"></span>Sparse</span>
       <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;border:1px dashed var(--gray);margin-right:4px;"></span>Missing</span>
     </div>
+
+    {% if all_reports %}
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--gray);">
+      <div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:6px;">Download Reports</div>
+      <p class="text-muted fs-sm" style="margin-bottom:10px;">
+        Generate PDF and HTML brand reports directly from the database.
+        Select a month then click a brand on the Dashboard to download.
+      </p>
+      <a href="/dashboard" class="btn btn-primary btn-sm" style="width:100%;text-align:center;">
+        Open Dashboard to Download Reports
+      </a>
+    </div>
+    {% endif %}
   </div>
 
 </div><!-- /two-col -->

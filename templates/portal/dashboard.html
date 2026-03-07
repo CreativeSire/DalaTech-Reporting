@@ -125,8 +125,12 @@
           {% elif b.wow_rev_change < 0 %}<span style="color:var(--red);font-weight:700;font-size:11px;">▼ {{ b.wow_rev_change|abs }}%</span>
           {% else %}<span class="text-muted fs-sm">—</span>{% endif %}
         </td>
-        <td>
+        <td style="white-space:nowrap;">
           <a href="/brand/{{ b.brand_name }}" class="btn btn-outline btn-sm">Detail</a>
+          <a href="/api/report_html/{{ report.id }}/{{ b.brand_name }}" target="_blank"
+             class="btn btn-outline btn-sm" title="View HTML report">HTML</a>
+          <a href="/api/report_pdf/{{ report.id }}/{{ b.brand_name }}"
+             class="btn btn-outline btn-sm" title="Download PDF report">PDF</a>
         </td>
       </tr>
       {% endfor %}

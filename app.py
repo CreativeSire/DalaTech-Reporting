@@ -1226,6 +1226,179 @@ def download_html(filename):
     return send_file(path, mimetype='text/html')
 
 
+# ── Generate PDF/HTML from DB data ────────────────────────────────────────────
+
+def _reconstruct_kpis_from_db(report_id: int, brand_name: str) -> dict:
+    """
+    Reconstruct a kpis dict from stored DB data for PDF/HTML generation.
+    daily_sales trend chart renders from the stored daily_sales table.
+    Sections not stored in DB (inventory, top-stores breakdown, SKUs) will be empty
+    but the chart functions handle empty DataFrames gracefully.
+    """
+    bk = ds.get_brand_kpis_single(report_id, brand_name)
+    if not bk:
+        return None
+
+    # Rebuild daily_sales DataFrame with the columns expected by chart_dual_trend
+    daily_rows = ds.get_daily_sales(report_id, brand_name)
+    if daily_rows:
+        daily_df = pd.DataFrame(daily_rows)[['date', 'revenue', 'qty']]
+        daily_df = daily_df.rename(columns={'date': 'Date', 'revenue': 'Revenue', 'qty': 'Quantity'})
+        daily_df['Date'] = pd.to_datetime(daily_df['Date'])
+    else:
+        daily_df = pd.DataFrame(columns=['Date', 'Revenue', 'Quantity'])
+
+    status    = bk.get('inv_health_status') or 'No Stock Data'
+    color_map = {'Healthy Stock': 'green', 'Low Stock': 'amber', 'Overstocked': 'blue'}
+    inv_color = color_map.get(status, 'gray')
+
+    return {
+        # Scalars from brand_kpis table
+        'total_revenue':         bk.get('total_revenue', 0),
+        'total_qty':             bk.get('total_qty', 0),
+        'num_stores':            bk.get('num_stores', 0),
+        'unique_skus':           bk.get('unique_skus', 0),
+        'trading_days':          bk.get('trading_days', 0),
+        'repeat_stores':         bk.get('repeat_stores', 0),
+        'single_stores':         bk.get('single_stores', 0),
+        'repeat_pct':            bk.get('repeat_pct', 0),
+        'avg_revenue_per_store': bk.get('avg_revenue_per_store', 0),
+        'closing_stock_total':   bk.get('closing_stock_total', 0),
+        'total_closing_stock':   bk.get('closing_stock_total', 0),
+        'stock_days_cover':      bk.get('stock_days_cover', 0),
+        'inv_health_status':     status,
+        'inv_health_color':      inv_color,
+        'peak_date':             bk.get('peak_date'),
+        'peak_revenue':          bk.get('peak_revenue', 0),
+        'top_store_name':        bk.get('top_store_name') or '—',
+        'top_store_revenue':     bk.get('top_store_revenue', 0),
+        'top_store_pct':         0,
+        'wow_rev_change':        bk.get('wow_rev_change', 0),
+        'wow_qty_change':        bk.get('wow_qty_change', 0),
+        # Placeholders for fields needed by generate_narrative (not stored in DB)
+        'top_sku':               '—',
+        'top_sku_qty':           0,
+        # DataFrames
+        'daily_sales':           daily_df,
+        'top_stores':            pd.DataFrame(columns=['Store', 'Revenue']),
+        'product_qty':           pd.DataFrame(columns=['SKU', 'Quantity']),
+        'product_value':         pd.DataFrame(columns=['SKU', 'Revenue']),
+        'closing_stock':         pd.DataFrame(columns=['SKU', 'Closing Stock (Cartons)']),
+        'reorder_analysis':      pd.DataFrame(),
+        'store_heatmap_df':      pd.DataFrame(columns=['Store', 'Date', 'Orders']),
+        'pickup_summary':        pd.DataFrame(columns=['SKU', 'Qty Picked Up', 'Value']),
+        'supply_summary':        pd.DataFrame(columns=['SKU', 'Qty Supplied', 'Value']),
+        'total_pickup_qty':      0,
+        'total_pickup_value':    0,
+        'total_supplied_qty':    0,
+        'total_supplied_value':  0,
+    }
+
+
+@app.route('/api/report_pdf/<int:report_id>/<path:brand_name>')
+def api_report_pdf(report_id, brand_name):
+    """Generate and serve a PDF report for a single brand from stored DB data."""
+    report = ds.get_report(report_id)
+    if not report:
+        abort(404)
+    kpis = _reconstruct_kpis_from_db(report_id, brand_name)
+    if not kpis:
+        abort(404)
+
+    # Use stored AI narrative if available, otherwise build a concise fallback
+    ai_narrative = ds.get_narrative(report_id, brand_name)
+    if not ai_narrative:
+        rev = kpis['total_revenue']
+        rev_fmt = f"₦{rev/1e6:.1f}M" if rev >= 1e6 else f"₦{rev:,.0f}"
+        ai_narrative = (
+            f"{brand_name} recorded {rev_fmt} in revenue across "
+            f"{kpis['trading_days']} trading days, reaching {kpis['num_stores']} stores. "
+            f"Repeat purchase rate: {kpis['repeat_pct']:.0f}%."
+        )
+
+    all_bk          = ds.get_all_brand_kpis(report_id)
+    total_portfolio = sum(b['total_revenue'] for b in all_bk)
+    avg_portfolio   = total_portfolio / max(len(all_bk), 1)
+
+    safe   = _safe_name(brand_name)
+    fname  = f"{safe}_Report_{report['start_date']}_{report['end_date']}.pdf"
+    out_path = os.path.join(PDF_DIR, fname)
+
+    try:
+        generate_pdf_html(
+            output_path=out_path,
+            brand_name=brand_name,
+            kpis=kpis,
+            start_date=report['start_date'],
+            end_date=report['end_date'],
+            portfolio_avg_revenue=avg_portfolio,
+            total_portfolio_revenue=total_portfolio,
+            ai_narrative=ai_narrative,
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    if os.path.isfile(out_path):
+        return send_file(out_path, as_attachment=True, download_name=fname,
+                         mimetype='application/pdf')
+
+    # Playwright may not be installed on Railway — fall back to HTML
+    html_path = out_path.replace('/pdf/', '/html/').replace('.pdf', '.html')
+    if os.path.isfile(html_path):
+        return send_file(html_path, mimetype='text/html')
+
+    abort(500)
+
+
+@app.route('/api/report_html/<int:report_id>/<path:brand_name>')
+def api_report_html(report_id, brand_name):
+    """Generate and serve an HTML report for a single brand from stored DB data."""
+    report = ds.get_report(report_id)
+    if not report:
+        abort(404)
+    kpis = _reconstruct_kpis_from_db(report_id, brand_name)
+    if not kpis:
+        abort(404)
+
+    ai_narrative = ds.get_narrative(report_id, brand_name)
+    if not ai_narrative:
+        rev = kpis['total_revenue']
+        rev_fmt = f"₦{rev/1e6:.1f}M" if rev >= 1e6 else f"₦{rev:,.0f}"
+        ai_narrative = (
+            f"{brand_name} recorded {rev_fmt} in revenue across "
+            f"{kpis['trading_days']} trading days, reaching {kpis['num_stores']} stores. "
+            f"Repeat purchase rate: {kpis['repeat_pct']:.0f}%."
+        )
+
+    all_bk          = ds.get_all_brand_kpis(report_id)
+    total_portfolio = sum(b['total_revenue'] for b in all_bk)
+    avg_portfolio   = total_portfolio / max(len(all_bk), 1)
+
+    safe     = _safe_name(brand_name)
+    fname    = f"{safe}_Report_{report['start_date']}_{report['end_date']}.pdf"
+    out_path = os.path.join(PDF_DIR, fname)
+
+    try:
+        generate_pdf_html(
+            output_path=out_path,
+            brand_name=brand_name,
+            kpis=kpis,
+            start_date=report['start_date'],
+            end_date=report['end_date'],
+            portfolio_avg_revenue=avg_portfolio,
+            total_portfolio_revenue=total_portfolio,
+            ai_narrative=ai_narrative,
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    html_path = out_path.replace('/pdf/', '/html/').replace('.pdf', '.html')
+    if os.path.isfile(html_path):
+        return send_file(html_path, mimetype='text/html')
+
+    abort(500)
+
+
 @app.route('/files')
 def list_files():
     pdfs  = sorted(f for f in os.listdir(PDF_DIR)  if f.endswith('.pdf')) if os.path.isdir(PDF_DIR) else []
