@@ -37,7 +37,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 11px 16px 9px 0;
+      padding: 11px 16px 4px 0;
       flex-shrink: 0;
       background: #fff;
     }
@@ -49,7 +49,7 @@
 
     /* Red vertical accent — full header height */
     .red-accent-bar {
-      width: 5px;
+      width: 6px;
       align-self: stretch;
       background: #E8192C;
       flex-shrink: 0;
@@ -58,9 +58,10 @@
 
     /* Only the logo image — no duplicate text */
     .dala-logo {
-      height: 52px;
-      width: auto;
-      object-fit: contain;
+      height: 60px;
+      width: 160px;
+      object-fit: cover;
+      object-position: 50% 55%;
     }
 
     .dala-logo-ph {
@@ -99,19 +100,26 @@
       font-weight: 700;
       letter-spacing: 1.8px;
       text-transform: uppercase;
-      padding: 5px 18px;
+      padding: 5px 12px;
       flex-shrink: 0;
+      display: inline-flex;
+      align-self: flex-start;
+      width: auto;
+      margin-left: 26px;
+      margin-bottom: 4px;
+      border-radius: 4px;
+      box-shadow: 0 2px 6px rgba(232,25,44,0.18);
     }
 
     /* ─── REPORT TITLE ────────────────────────────────────────────────────── */
     .title-area {
-      padding: 13px 20px 7px;
+      padding: 8px 20px 7px;
       flex-shrink: 0;
     }
 
     .report-title {
       font-family: Georgia, 'Times New Roman', 'DejaVu Serif', serif;
-      font-size: 21pt;
+      font-size: 22pt;
       font-style: italic;
       font-weight: bold;
       color: #C8191E;
@@ -124,7 +132,7 @@
       background: #EAECF1;
       border: 1px solid #C5C8D2;
       border-radius: 6px;
-      padding: 7px;
+      padding: 6px;
       flex-shrink: 0;
     }
 
@@ -256,7 +264,7 @@
     /* Chart images: give them real height so they're readable */
     .snap-chart img {
       width: 100%;
-      height: 100px;
+      height: 106px;
       object-fit: contain;
       display: block;
     }
@@ -277,7 +285,7 @@
 
     .snap-stock img {
       width: 100%;
-      height: 100px;
+      height: 104px;
       object-fit: contain;
       display: block;
     }
@@ -297,16 +305,56 @@
     .snap-trend-header {
       display: flex;
       justify-content: space-between;
-      align-items: baseline;
+      align-items: center;
       margin-bottom: 3px;
     }
 
     .snap-trend-title { font-size: 5.5pt; font-weight: 700; color: #333; }
-    .snap-trend-sub   { font-size: 4.5pt; color: #BBB; }
+    .snap-trend-sub   { font-size: 4.5pt; color: #BBB; display: block; margin-top: 1px; }
+
+    .trend-legend-inline {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .trend-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 5pt;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .trend-chip::before {
+      content: '';
+      display: inline-block;
+      width: 10px;
+      height: 0;
+      border-top: 2px solid currentColor;
+    }
+
+    .trend-chip.revenue {
+      background: rgba(232,25,44,0.10);
+      color: #E8192C;
+    }
+
+    .trend-chip.quantity {
+      background: rgba(27,43,94,0.10);
+      color: #1B2B5E;
+    }
+
+    .trend-chip.quantity::before {
+      border-top-style: dashed;
+    }
 
     .snap-trend img {
       width: 100%;
-      height: 82px;
+      height: 108px;
       object-fit: contain;
       display: block;
     }
@@ -314,7 +362,7 @@
     /* ─── NARRATIVE CONTENT ───────────────────────────────────────────────── */
     .content-area {
       flex: 1;
-      padding: 9px 20px 5px;
+      padding: 7px 20px 4px;
       overflow: hidden;
     }
 
@@ -342,8 +390,8 @@
     .narrative-section ul li {
       font-size: 8.5pt;
       color: #333;
-      margin-bottom: 4px;
-      line-height: 1.48;
+      margin-bottom: 3px;
+      line-height: 1.40;
     }
 
     /* ─── PERFORMANCE SCORECARD (page 2) ─────────────────────────────────── */
@@ -436,6 +484,12 @@
     .sc-total-block {
       text-align: center;
       flex-shrink: 0;
+      min-width: 110px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #fafcff 0%, #edf2fb 100%);
+      border: 1px solid #d9e1f0;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
     }
 
     .sc-total-num {
@@ -451,6 +505,46 @@
       text-transform: uppercase;
       letter-spacing: 0.5px;
       margin-top: 1px;
+    }
+
+    .score-kicker {
+      font-size: 4.6pt;
+      color: #7F8AA3;
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    .score-line {
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: 2px;
+      line-height: 1;
+    }
+
+    .score-denom {
+      font-size: 9pt;
+      color: #6B7A99;
+      font-weight: 700;
+    }
+
+    .score-share-kicker {
+      margin-top: 6px;
+      font-size: 4.6pt;
+      color: #7F8AA3;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    .snap-kpi-value,
+    .snap-reach-value,
+    .snap-inv-num,
+    .dtc-table,
+    .footer-contact {
+      font-family: 'Segoe UI Symbol', 'Segoe UI', Arial, sans-serif;
     }
 
     /* ─── DATA TABLES (page 2) ────────────────────────────────────────────── */
@@ -660,8 +754,14 @@
     <!-- Row 3: Sales Trend (full width) -->
     <div class="snap-trend">
       <div class="snap-trend-header">
-        <span class="snap-trend-title">Sales Trend</span>
-        <span class="snap-trend-sub">Total Revenue &amp; Quantity by Date — {{ start_date }} to {{ end_date }}</span>
+        <div>
+          <span class="snap-trend-title">Sales Trend</span>
+          <span class="snap-trend-sub">Total Revenue &amp; Quantity by Date — {{ start_date }} to {{ end_date }}</span>
+        </div>
+        <div class="trend-legend-inline">
+          <span class="trend-chip revenue">Revenue</span>
+          <span class="trend-chip quantity">Quantity</span>
+        </div>
       </div>
       <img src="{{ dual_trend_chart }}" alt="Sales Trend">
     </div><!-- /row 3 -->
@@ -788,10 +888,13 @@
 
     <!-- Total score + portfolio share -->
     <div class="sc-total-block">
-      <div class="sc-total-num">{{ perf.total }}</div>
-      <div class="sc-total-label">/ 100 Score</div>
+      <div class="score-kicker">Overall Score</div>
+      <div class="score-line">
+        <div class="sc-total-num">{{ perf.total }}</div>
+        <div class="score-denom">/100</div>
+      </div>
       {% if portfolio_share %}
-      <div style="margin-top:6px;font-size:5pt;color:#888;">Portfolio Share</div>
+      <div class="score-share-kicker">Portfolio Share</div>
       <div style="font-size:11pt;font-weight:800;color:#1B2B5E;line-height:1;">{{ portfolio_share }}%</div>
       {% endif %}
     </div>

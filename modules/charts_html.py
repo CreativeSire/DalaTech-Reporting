@@ -15,6 +15,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.ticker as mticker
+from matplotlib import transforms as mtransforms
 import numpy as np
 import pandas as pd
 
@@ -30,7 +31,7 @@ C_TEXT   = '#1A1A2E'
 C_MUTED  = '#7A849E'
 C_GRID   = '#EAEEF5'
 
-DPI = 150
+DPI = 220
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -60,6 +61,15 @@ def _qty(v):
     return s
 
 
+def _shorten_label(value, max_chars: int) -> str:
+    """Shorten labels for dense print charts."""
+    text = str(value or '').strip()
+    if len(text) <= max_chars:
+        return text
+    clipped = text[: max_chars - 1].rstrip(' ,-/')
+    return f'{clipped}...'
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CHART FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -75,16 +85,15 @@ def chart_top_stores(top_stores_df, width_in=6.0, height_in=2.5,
     df = df.head(n).iloc[::-1].reset_index(drop=True)
 
     if _for_print:
-        # Generate at a size that, when downscaled to the PDF card (~115px tall),
-        # gives legible ~7-9pt text.
-        fig_h = max(0.85, n * 0.28)   # ~0.85–1.4in for 3–5 bars
+        fig_h = max(0.98, n * 0.34)
         fig_w = 3.4
-        fs_val   = 10    # bar value labels
-        fs_tick  = 9     # y-axis store names
-        fs_xlab  = 8
-        bar_h    = 0.55
+        fs_val   = 10.6
+        fs_tick  = 10.2
+        fs_xlab  = 8.2
+        bar_h    = 0.58
         lw_grid  = 0.8
         spine_lw = 0.6
+        df['Store'] = df['Store'].map(lambda s: _shorten_label(s, 16))
     else:
         fig_h, fig_w = height_in, width_in
         fs_val, fs_tick, fs_xlab = 8, 9, 9
@@ -96,11 +105,34 @@ def chart_top_stores(top_stores_df, width_in=6.0, height_in=2.5,
     bars   = ax.barh(df['Store'], df['Revenue'], color=colors, height=bar_h,
                      linewidth=0)
 
-    max_val = max(df['Revenue'])
+    max_val = max(float(df['Revenue'].max()), 1.0)
+    label_transform = mtransforms.blended_transform_factory(ax.transAxes, ax.transData)
     for bar, val in zip(bars, df['Revenue']):
-        ax.text(val + max_val * 0.015, bar.get_y() + bar.get_height() / 2,
-                _naira(val), va='center', ha='left',
-                fontsize=fs_val, fontweight='bold', color='#333')
+        if _for_print:
+            ax.text(
+                0.985,
+                bar.get_y() + bar.get_height() / 2,
+                _naira(float(val)),
+                va='center',
+                ha='right',
+                fontsize=fs_val,
+                fontweight='bold',
+                color='#2A2A2A',
+                transform=label_transform,
+                clip_on=False,
+                bbox={'facecolor': 'white', 'edgecolor': 'none', 'pad': 0.18, 'alpha': 0.96},
+            )
+        else:
+            ax.text(
+                float(val) + max_val * 0.015,
+                bar.get_y() + bar.get_height() / 2,
+                _naira(float(val)),
+                va='center',
+                ha='left',
+                fontsize=fs_val,
+                fontweight='bold',
+                color='#333',
+            )
 
     ax.set_xlim(0, max_val * 1.28)
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: _naira(x)))
@@ -111,8 +143,13 @@ def chart_top_stores(top_stores_df, width_in=6.0, height_in=2.5,
     ax.spines['bottom'].set_color(C_GRAY)
 
     ax.tick_params(axis='y', length=0, labelsize=fs_tick, pad=3)
-    ax.tick_params(axis='x', labelsize=max(fs_xlab - 1, 6), colors=C_MUTED, length=2)
-    ax.set_xlabel('Revenue', fontsize=fs_xlab, color=C_MUTED)
+    if _for_print:
+        ax.tick_params(axis='x', labelbottom=False, length=0)
+        ax.set_xlabel('')
+        ax.margins(y=0.12)
+    else:
+        ax.tick_params(axis='x', labelsize=max(fs_xlab - 1, 6), colors=C_MUTED, length=2)
+        ax.set_xlabel('Revenue', fontsize=fs_xlab, color=C_MUTED)
     ax.grid(axis='x', alpha=0.35, color=C_GRAY, linewidth=lw_grid)
 
     plt.tight_layout(pad=0.3 if _for_print else 1.0)
@@ -172,10 +209,11 @@ def chart_product_value(product_value_df, width_in=3.0, height_in=2.2,
     df = df.iloc[::-1].reset_index(drop=True)
 
     if _for_print:
-        fig_h = max(0.85, n * 0.28)
+        fig_h = max(0.98, n * 0.34)
         fig_w = 3.4
-        fs_val, fs_tick, fs_xlab = 10, 9, 8
-        bar_h = 0.55
+        fs_val, fs_tick, fs_xlab = 10.6, 10.2, 8.2
+        bar_h = 0.58
+        df['SKU'] = df['SKU'].map(lambda s: _shorten_label(s, 17))
     else:
         fig_h, fig_w = height_in, width_in
         fs_val, fs_tick, fs_xlab = 8, 8, 8
@@ -187,11 +225,34 @@ def chart_product_value(product_value_df, width_in=3.0, height_in=2.2,
     colors = [C_RED] * n  # uniform red for product chart
     bars = ax.barh(df['SKU'], df['Revenue'], color=colors, height=bar_h, linewidth=0)
 
-    max_val = max(df['Revenue'])
+    max_val = max(float(df['Revenue'].max()), 1.0)
+    label_transform = mtransforms.blended_transform_factory(ax.transAxes, ax.transData)
     for bar, val in zip(bars, df['Revenue']):
-        ax.text(val + max_val * 0.015, bar.get_y() + bar.get_height() / 2,
-                _naira(val), va='center', ha='left',
-                fontsize=fs_val, fontweight='bold', color='#333')
+        if _for_print:
+            ax.text(
+                0.985,
+                bar.get_y() + bar.get_height() / 2,
+                _naira(float(val)),
+                va='center',
+                ha='right',
+                fontsize=fs_val,
+                fontweight='bold',
+                color='#2A2A2A',
+                transform=label_transform,
+                clip_on=False,
+                bbox={'facecolor': 'white', 'edgecolor': 'none', 'pad': 0.18, 'alpha': 0.96},
+            )
+        else:
+            ax.text(
+                float(val) + max_val * 0.015,
+                bar.get_y() + bar.get_height() / 2,
+                _naira(float(val)),
+                va='center',
+                ha='left',
+                fontsize=fs_val,
+                fontweight='bold',
+                color='#333',
+            )
 
     ax.set_xlim(0, max_val * 1.28)
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: _naira(x)))
@@ -202,8 +263,13 @@ def chart_product_value(product_value_df, width_in=3.0, height_in=2.2,
     ax.spines['bottom'].set_linewidth(0.6 if _for_print else 1.0)
 
     ax.tick_params(axis='y', length=0, labelsize=fs_tick, pad=3)
-    ax.tick_params(axis='x', labelsize=max(fs_xlab - 1, 6), colors=C_MUTED, length=2)
-    ax.set_xlabel('Revenue', fontsize=fs_xlab, color=C_MUTED)
+    if _for_print:
+        ax.tick_params(axis='x', labelbottom=False, length=0)
+        ax.set_xlabel('')
+        ax.margins(y=0.12)
+    else:
+        ax.tick_params(axis='x', labelsize=max(fs_xlab - 1, 6), colors=C_MUTED, length=2)
+        ax.set_xlabel('Revenue', fontsize=fs_xlab, color=C_MUTED)
     ax.grid(axis='x', alpha=0.35, color=C_GRAY)
 
     plt.tight_layout(pad=0.3 if _for_print else 1.0)
@@ -341,10 +407,10 @@ def chart_dual_trend(daily_sales_df, width_in=6.5, height_in=2.0,
     df = df.sort_values('Date')
 
     if _for_print:
-        fig_w, fig_h = 5.5, 1.45
-        fs_tick  = 9      # date labels
-        fs_yleft = 8      # revenue y-axis
-        fs_yright= 8      # quantity y-axis
+        fig_w, fig_h = 5.5, 1.15
+        fs_tick  = 11
+        fs_yleft = 11
+        fs_yright= 11
         fs_legend= 8
         lw_rev   = 2.8    # revenue line weight
         lw_qty   = 2.0    # quantity line weight
@@ -392,9 +458,15 @@ def chart_dual_trend(daily_sales_df, width_in=6.5, height_in=2.0,
     ax2.yaxis.set_major_locator(mticker.MaxNLocator(nbins=4, integer=True))
 
     # ── X-axis dates ──────────────────────────────────────────────────────
-    n_days = len(df)
-    interval = max(1, n_days // 6)
-    ax1.xaxis.set_major_locator(mdates.DayLocator(interval=interval))
+    if _for_print:
+        tick_count = min(5, len(df))
+        tick_idx = sorted(set(int(round(i)) for i in np.linspace(0, len(df) - 1, tick_count)))
+        tick_dates = [df['Date'].iloc[i] for i in tick_idx]
+        ax1.set_xticks(tick_dates)
+    else:
+        n_days = len(df)
+        interval = max(1, n_days // 6)
+        ax1.xaxis.set_major_locator(mdates.DayLocator(interval=interval))
     ax1.xaxis.set_major_formatter(mdates.DateFormatter('%d %b'))
     plt.setp(ax1.xaxis.get_majorticklabels(),
              rotation=0, ha='center', fontsize=fs_tick)
@@ -417,13 +489,14 @@ def chart_dual_trend(daily_sales_df, width_in=6.5, height_in=2.0,
     ax1.set_axisbelow(True)
 
     # ── Legend ────────────────────────────────────────────────────────────
-    h1, l1 = ax1.get_legend_handles_labels()
-    h2, l2 = ax2.get_legend_handles_labels()
-    ax1.legend(h1 + h2, l1 + l2,
-               loc='upper right', fontsize=fs_legend,
-               framealpha=0.9, edgecolor='#EEE',
-               ncol=2, handlelength=1.5, columnspacing=1.0,
-               borderpad=0.4, labelspacing=0.3)
+    if not _for_print:
+        h1, l1 = ax1.get_legend_handles_labels()
+        h2, l2 = ax2.get_legend_handles_labels()
+        ax1.legend(h1 + h2, l1 + l2,
+                   loc='upper right', fontsize=fs_legend,
+                   framealpha=0.9, edgecolor='#EEE',
+                   ncol=2, handlelength=1.5, columnspacing=1.0,
+                   borderpad=0.4, labelspacing=0.3)
 
     plt.tight_layout(pad=0.4 if _for_print else 0.5)
     return _save_base64(fig, tight_pad=0.04 if _for_print else 0.1)
