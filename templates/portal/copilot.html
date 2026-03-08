@@ -1,0 +1,93 @@
+{% extends "portal/base.html" %}
+{% block title %}Copilot — DALA Analytics{% endblock %}
+{% block page_title %}Admin Copilot{% endblock %}
+
+{% block topbar_actions %}
+<a href="/agent-actions" class="btn btn-outline btn-sm">Review Agent Actions</a>
+{% endblock %}
+
+{% block head %}
+<style>
+  .copilot-grid { display:grid; grid-template-columns:1.25fr .75fr; gap:20px; }
+  .copilot-answer { min-height:180px; white-space:pre-wrap; line-height:1.7; }
+  @media(max-width:900px){ .copilot-grid { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="grid-3 mb-3">
+  <div class="kpi-card blue">
+    <div class="kpi-label">Pending Actions</div>
+    <div class="kpi-value">{{ pending_actions|length }}</div>
+    <div class="kpi-sub">Approval-first queue</div>
+  </div>
+  <div class="kpi-card red">
+    <div class="kpi-label">Activity Issues</div>
+    <div class="kpi-value">{{ activity_summary.totals.issues or 0 }}</div>
+    <div class="kpi-sub">From latest linked activity</div>
+  </div>
+  <div class="kpi-card green">
+    <div class="kpi-label">Visits</div>
+    <div class="kpi-value">{{ activity_summary.totals.visits or 0 }}</div>
+    <div class="kpi-sub">{{ report.month_label if report else 'No report yet' }}</div>
+  </div>
+</div>
+
+<div class="copilot-grid">
+  <div class="card">
+    <h3 class="text-navy fw-bold mb-2">Ask Copilot</h3>
+    <p class="text-muted fs-sm mb-2">Examples: "What needs attention this week?" or "Summarize Zayith with field issues."</p>
+    <div class="form-group">
+      <label class="form-label">Question</label>
+      <textarea id="copilotQuestion" class="form-control" rows="4" placeholder="Ask about brands, risks, activity, targets, or forecasts."></textarea>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Optional Brand Context</label>
+      <input id="copilotBrand" class="form-control" type="text" placeholder="e.g. Zayith">
+    </div>
+    <button id="copilotAskBtn" class="btn btn-primary">Ask Copilot</button>
+    <div id="copilotAnswer" class="copilot-answer mt-2 text-muted">Your answer will appear here.</div>
+  </div>
+
+  <div class="card">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="text-navy fw-bold">Pending Actions</h3>
+      <span class="badge badge-blue">{{ pending_actions|length }}</span>
+    </div>
+    {% for action in pending_actions[:10] %}
+    <div style="padding:12px 0;border-bottom:1px solid var(--gray);">
+      <div class="flex items-center justify-between">
+        <strong>{{ action.title }}</strong>
+        <span class="badge {% if action.priority == 'high' or action.priority == 'critical' %}badge-red{% else %}badge-amber{% endif %}">{{ action.priority }}</span>
+      </div>
+      <div class="fs-sm text-muted mt-1">{{ action.agent_type }} · {{ action.subject_key }}</div>
+      {% if action.reason %}<div class="fs-sm mt-1">{{ action.reason }}</div>{% endif %}
+    </div>
+    {% else %}
+    <p class="text-muted fs-sm">No pending actions yet.</p>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('copilotAskBtn')?.addEventListener('click', async () => {
+  const answerEl = document.getElementById('copilotAnswer');
+  const question = document.getElementById('copilotQuestion').value.trim();
+  const brandName = document.getElementById('copilotBrand').value.trim();
+  if (!question) {
+    answerEl.textContent = 'Please enter a question first.';
+    return;
+  }
+  answerEl.textContent = 'Thinking...';
+  const res = await fetch('/api/copilot/query', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, brand_name: brandName })
+  });
+  const data = await res.json();
+  answerEl.textContent = data.success ? data.answer : (data.error || 'Query failed.');
+});
+</script>
+{% endblock %}

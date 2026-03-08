@@ -180,6 +180,12 @@
     <a href="/forecasting" class="nav-link {% if request.endpoint=='forecasting' %}active{% endif %}">
       <span class="nav-icon">🔮</span> Forecasting
     </a>
+    <a href="/copilot" class="nav-link {% if request.endpoint=='copilot_dashboard' %}active{% endif %}">
+      <span class="nav-icon">🧠</span> Copilot
+    </a>
+    <a href="/activity-intelligence" class="nav-link {% if request.endpoint=='activity_intelligence' %}active{% endif %}">
+      <span class="nav-icon">📝</span> Activity Intelligence
+    </a>
     <a href="/leaderboard" class="nav-link {% if request.endpoint=='leaderboard' %}active{% endif %}">
       <span class="nav-icon">🏆</span> Leaderboard
     </a>
@@ -213,6 +219,9 @@
     </a>
     <a href="/catalog" class="nav-link {% if request.endpoint in ['catalog','catalog_brand_detail'] %}active{% endif %}">
       <span class="nav-icon">🧾</span> Catalog
+    </a>
+    <a href="/agent-actions" class="nav-link {% if request.endpoint=='agent_actions_page' %}active{% endif %}">
+      <span class="nav-icon">✅</span> Agent Actions
     </a>
     <a href="/settings" class="nav-link {% if request.endpoint=='settings' %}active{% endif %}">
       <span class="nav-icon">⚙️</span> Settings

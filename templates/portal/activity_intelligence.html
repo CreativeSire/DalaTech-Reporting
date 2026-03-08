@@ -1,0 +1,187 @@
+{% extends "portal/base.html" %}
+{% block title %}Activity Intelligence — DALA Analytics{% endblock %}
+{% block page_title %}Activity Intelligence{% endblock %}
+
+{% block topbar_actions %}
+<span class="text-muted fs-sm">
+  {% if report %}Linked to {{ report.month_label }}{% else %}No linked sales report{% endif %}
+</span>
+{% endblock %}
+
+{% block head %}
+<style>
+  .summary-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:16px; margin-bottom:24px; }
+  .issue-list, .visit-list { display:flex; flex-direction:column; gap:8px; }
+  .issue-row, .visit-row { padding:12px; border:1px solid var(--gray); border-radius:10px; background:var(--bg); }
+  .split-grid { display:grid; grid-template-columns:1.2fr .8fr; gap:20px; }
+  @media(max-width:900px){ .summary-grid,.split-grid { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card mb-3">
+  <div class="flex items-center justify-between mb-2">
+    <div>
+      <h3 class="text-navy fw-bold">Import Activity Report</h3>
+      <p class="text-muted fs-sm">Supports Excel, CSV, TXT, and tab-delimited .xls exports.</p>
+    </div>
+  </div>
+  <form id="activityImportForm" class="grid-3">
+    <div class="form-group" style="grid-column:span 2;">
+      <label class="form-label">Activity File</label>
+      <input class="form-control" type="file" name="file" accept=".xlsx,.xls,.csv,.txt,.tsv" required>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Link to Report</label>
+      <select class="form-control" name="report_id">
+        <option value="">Auto-detect from dates</option>
+        {% for item in reports %}
+        <option value="{{ item.id }}" {% if report and item.id == report.id %}selected{% endif %}>{{ item.month_label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <button class="btn btn-primary" type="submit">Import Activity</button>
+      <span id="activityImportMsg" class="text-muted fs-sm" style="margin-left:10px;"></span>
+    </div>
+  </form>
+</div>
+
+<div class="summary-grid">
+  <div class="kpi-card blue">
+    <div class="kpi-label">Events</div>
+    <div class="kpi-value">{{ summary.totals.events or 0 }}</div>
+    <div class="kpi-sub">Raw responses logged</div>
+  </div>
+  <div class="kpi-card green">
+    <div class="kpi-label">Visits</div>
+    <div class="kpi-value">{{ summary.totals.visits or 0 }}</div>
+    <div class="kpi-sub">Store visits derived</div>
+  </div>
+  <div class="kpi-card red">
+    <div class="kpi-label">Issues</div>
+    <div class="kpi-value">{{ summary.totals.issues or 0 }}</div>
+    <div class="kpi-sub">Open field issues/opportunities</div>
+  </div>
+  <div class="kpi-card amber">
+    <div class="kpi-label">Salespeople</div>
+    <div class="kpi-value">{{ summary.totals.salespeople or 0 }}</div>
+    <div class="kpi-sub">{{ summary.totals.stores or 0 }} stores visited</div>
+  </div>
+</div>
+
+<div class="split-grid mb-3">
+  <div class="card">
+    <div class="flex items-center justify-between mb-2">
+      <h3 class="text-navy fw-bold">Recent Issues</h3>
+      <span class="badge badge-red">{{ summary.top_issues|length }} issue types</span>
+    </div>
+    {% if summary.recent_issues %}
+    <div class="issue-list">
+      {% for issue in summary.recent_issues %}
+      <div class="issue-row">
+        <div class="flex items-center justify-between">
+          <strong>{{ issue.brand_name or 'Unmatched brand' }}</strong>
+          <span class="badge {% if issue.severity == 'high' %}badge-red{% elif issue.severity == 'medium' %}badge-amber{% else %}badge-blue{% endif %}">
+            {{ issue.issue_type|replace('_', ' ') }}
+          </span>
+        </div>
+        <div class="fs-sm text-muted mt-1">{{ issue.retailer_name or issue.retailer_code or 'Unknown store' }} · {{ issue.activity_date or 'No date' }}</div>
+        {% if issue.answer %}
+        <div class="mt-1">{{ issue.answer[:180] }}{% if issue.answer|length > 180 %}...{% endif %}</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted fs-sm">No activity issues have been imported yet.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3 class="text-navy fw-bold mb-2">Top Breakdown</h3>
+    <div class="mb-2">
+      <div class="form-label">Issue Themes</div>
+      {% for row in summary.top_issues %}
+      <div class="row"><span>{{ row.issue_type|replace('_', ' ')|title }}</span><strong>{{ row.count }}</strong></div>
+      {% else %}
+      <div class="text-muted fs-sm">No issue themes yet.</div>
+      {% endfor %}
+    </div>
+    <div class="mb-2">
+      <div class="form-label">Brand Mentions</div>
+      {% for row in summary.top_brands %}
+      <div class="row"><span>{{ row.brand_name }}</span><strong>{{ row.count }}</strong></div>
+      {% else %}
+      <div class="text-muted fs-sm">No brand mentions yet.</div>
+      {% endfor %}
+    </div>
+    <div>
+      <div class="form-label">Salespeople</div>
+      {% for row in summary.top_salespeople %}
+      <div class="row"><span>{{ row.salesman_name or 'Unknown' }}</span><strong>{{ row.visits }}</strong></div>
+      {% else %}
+      <div class="text-muted fs-sm">No visit summaries yet.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h3 class="text-navy fw-bold mb-2">Recent Visits</h3>
+    {% if summary.recent_visits %}
+    <div class="visit-list">
+      {% for visit in summary.recent_visits %}
+      <div class="visit-row">
+        <div class="flex items-center justify-between">
+          <strong>{{ visit.retailer_name or visit.retailer_code }}</strong>
+          <a href="{{ url_for('store_360', retailer_code=visit.retailer_code) }}" class="btn btn-outline btn-sm">Store 360</a>
+        </div>
+        <div class="fs-sm text-muted mt-1">{{ visit.activity_date }} · {{ visit.salesman_name or 'Unknown SE' }}</div>
+        <div class="fs-sm mt-1">{{ visit.event_count }} responses · {{ visit.issue_count }} issues · {{ visit.opportunity_count }} opportunities</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted fs-sm">No visits have been imported yet.</p>
+    {% endif %}
+  </div>
+  <div class="card">
+    <h3 class="text-navy fw-bold mb-2">Imported Batches</h3>
+    <table class="data-table">
+      <thead><tr><th>File</th><th>Period</th><th>Rows</th></tr></thead>
+      <tbody>
+        {% for batch in batches %}
+        <tr>
+          <td>{{ batch.source_filename }}</td>
+          <td>{{ batch.start_date or '—' }}{% if batch.end_date and batch.end_date != batch.start_date %} to {{ batch.end_date }}{% endif %}</td>
+          <td>{{ batch.row_count }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="text-muted">No activity batches imported yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('activityImportForm')?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const msg = document.getElementById('activityImportMsg');
+  msg.textContent = 'Importing...';
+  const res = await fetch('/api/activity/import', { method: 'POST', body: new FormData(form) });
+  const data = await res.json();
+  if (data.success) {
+    msg.textContent = 'Imported successfully. Reloading...';
+    window.location.reload();
+    return;
+  }
+  msg.textContent = data.error || 'Import failed.';
+});
+</script>
+{% endblock %}

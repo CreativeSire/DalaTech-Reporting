@@ -61,7 +61,7 @@ def send_report_email(recipient_email, brand_name, month_label,
         month_label:     str — e.g. 'Feb 2026'
         pdf_path:        str — absolute path to PDF (attached if provided)
         html_url:        str — link to interactive HTML (included in body)
-        kpis_summary:    dict — optional {'revenue', 'qty', 'stores', 'grade'}
+        kpis_summary:    dict — optional {'revenue', 'qty', 'stores', 'avg_revenue_per_store'}
 
     Returns:
         (success: bool, message: str)
@@ -77,7 +77,7 @@ def send_report_email(recipient_email, brand_name, month_label,
         rev = kpis_summary.get('revenue', 0)
         qty = kpis_summary.get('qty', 0)
         stores = kpis_summary.get('stores', 0)
-        grade = kpis_summary.get('grade', '-')
+        avg_store = kpis_summary.get('avg_revenue_per_store', 0)
         kpis_html = f"""
         <table style="border-collapse:collapse;width:100%;margin:16px 0;">
           <tr>
@@ -96,9 +96,9 @@ def send_report_email(recipient_email, brand_name, month_label,
               <div style="font-size:20px;font-weight:700;color:#1B2B5E;">{stores}</div>
             </td>
             <td style="padding:4px;"></td>
-            <td style="padding:12px;background:#1B2B5E;border-radius:6px;text-align:center;">
-              <div style="font-size:11px;color:rgba(255,255,255,0.7);text-transform:uppercase;">Grade</div>
-              <div style="font-size:24px;font-weight:700;color:white;">{grade}</div>
+            <td style="padding:12px;background:#F4F6FA;border-radius:6px;text-align:center;">
+              <div style="font-size:11px;color:#7A849E;text-transform:uppercase;">Avg Revenue / Supermarket</div>
+              <div style="font-size:20px;font-weight:700;color:#1B2B5E;">&#8358;{avg_store:,.0f}</div>
             </td>
           </tr>
         </table>"""
@@ -203,7 +203,7 @@ def send_bulk_reports(brand_contacts, month_label, pdf_dir=None, base_url=None, 
                         'revenue': bk['total_revenue'],
                         'qty':     bk['total_qty'],
                         'stores':  bk['num_stores'],
-                        'grade':   bk['perf_grade'],
+                        'avg_revenue_per_store': bk.get('avg_revenue_per_store', 0),
                     }
 
         ok, msg = send_report_email(
@@ -228,7 +228,7 @@ def send_whatsapp_summary(whatsapp_number, brand_name, month_label, kpis_summary
         whatsapp_number: str — recipient number e.g. '+2348012345678'
         brand_name:      str
         month_label:     str
-        kpis_summary:    dict — optional {'revenue', 'qty', 'stores', 'grade'}
+        kpis_summary:    dict — optional {'revenue', 'qty', 'stores', 'avg_revenue_per_store'}
 
     Returns:
         (success: bool, message: str)
@@ -251,11 +251,11 @@ def send_whatsapp_summary(whatsapp_number, brand_name, month_label, kpis_summary
         rev = kpis_summary.get('revenue', 0)
         qty = kpis_summary.get('qty', 0)
         stores = kpis_summary.get('stores', 0)
-        grade = kpis_summary.get('grade', '-')
+        avg_store = kpis_summary.get('avg_revenue_per_store', 0)
         body += f"📊 *Revenue:* ₦{rev:,.0f}\n"
         body += f"📦 *Qty Sold:* {qty:,.1f} packs\n"
         body += f"🏪 *Stores:* {stores}\n"
-        body += f"⭐ *Performance Grade:* {grade}\n\n"
+        body += f"💹 *Avg Revenue / Supermarket:* ₦{avg_store:,.0f}\n\n"
 
     body += "Log in to the DALA portal to view your full interactive dashboard and download your PDF report."
 
@@ -292,7 +292,7 @@ def send_bulk_whatsapp(brand_contacts, month_label, ds=None):
                         'revenue': bk['total_revenue'],
                         'qty':     bk['total_qty'],
                         'stores':  bk['num_stores'],
-                        'grade':   bk['perf_grade'],
+                        'avg_revenue_per_store': bk.get('avg_revenue_per_store', 0),
                     }
         ok, msg = send_whatsapp_summary(wa, brand, month_label, kpis_summary)
         results.append({'brand_name': brand, 'success': ok, 'message': msg})

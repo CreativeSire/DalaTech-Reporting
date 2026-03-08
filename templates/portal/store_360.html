@@ -1,0 +1,73 @@
+{% extends "portal/base.html" %}
+{% block title %}Store 360 — DALA Analytics{% endblock %}
+{% block page_title %}Store 360{% endblock %}
+
+{% block topbar_actions %}
+<span class="text-muted fs-sm">{{ retailer_code }}</span>
+{% endblock %}
+
+{% block content %}
+{% if not summary.store %}
+<div class="card"><p class="text-muted">No store activity found.</p></div>
+{% else %}
+<div class="grid-3 mb-3">
+  <div class="kpi-card blue">
+    <div class="kpi-label">Store</div>
+    <div class="kpi-value-sm">{{ summary.store.retailer_name }}</div>
+    <div class="kpi-sub">{{ summary.store.retailer_city }}, {{ summary.store.retailer_state }}</div>
+  </div>
+  <div class="kpi-card red">
+    <div class="kpi-label">Active Days</div>
+    <div class="kpi-value">{{ summary.store.active_days or 0 }}</div>
+    <div class="kpi-sub">{{ summary.store.events or 0 }} responses logged</div>
+  </div>
+  <div class="kpi-card green">
+    <div class="kpi-label">Salespeople</div>
+    <div class="kpi-value">{{ summary.store.salespeople or 0 }}</div>
+    <div class="kpi-sub">Distinct SEs logged</div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h3 class="text-navy fw-bold mb-2">Recent Visits</h3>
+    {% for visit in summary.visits %}
+    <div style="padding:12px 0;border-bottom:1px solid var(--gray);">
+      <div class="fw-bold">{{ visit.activity_date }}</div>
+      <div class="fs-sm text-muted">{{ visit.salesman_name or 'Unknown SE' }} · {{ visit.survey_name or 'No survey name' }}</div>
+      <div class="fs-sm mt-1">{{ visit.event_count }} responses · {{ visit.issue_count }} issues · {{ visit.opportunity_count }} opportunities</div>
+    </div>
+    {% else %}
+    <p class="text-muted fs-sm">No visits found.</p>
+    {% endfor %}
+  </div>
+  <div class="card">
+    <h3 class="text-navy fw-bold mb-2">Brand Mentions</h3>
+    {% for brand in summary.brands %}
+    <div class="row"><span>{{ brand.brand_name }}</span><strong>{{ brand.mentions }}</strong></div>
+    {% else %}
+    <p class="text-muted fs-sm">No brand mentions found.</p>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card mt-3">
+  <h3 class="text-navy fw-bold mb-2">Issue Log</h3>
+  <table class="data-table">
+    <thead><tr><th>Date</th><th>Brand</th><th>Issue</th><th>Detail</th></tr></thead>
+    <tbody>
+      {% for issue in summary.issues %}
+      <tr>
+        <td>{{ issue.activity_date }}</td>
+        <td>{{ issue.brand_name or 'Unmatched' }}</td>
+        <td>{{ issue.issue_type|replace('_', ' ')|title }}</td>
+        <td>{{ issue.answer or issue.label or issue.question }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="text-muted">No issues logged for this store.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

@@ -761,37 +761,43 @@
         </div>
       </div>
 
-      <!-- Performance Scorecard -->
+      <!-- Growth Outlook -->
       <div class="scorecard">
-        <div class="card-title">Performance Scorecard</div>
-        <div class="scorecard-header">
-          <div class="grade-circle" style="border-color:{{ perf.grade_color }};color:{{ perf.grade_color }};">
-            <div class="grade-letter">{{ perf.grade }}</div>
-            <div class="grade-label" style="color:{{ perf.grade_color }};">{{ perf.total }}/100</div>
+        <div class="card-title">Growth Outlook</div>
+        {% if growth_outlook and growth_outlook.available %}
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px;">
+          <div>
+            <div style="font-size:22px;font-weight:800;color:var(--navy);">{{ growth_outlook.anchor_label }}</div>
+            <p class="text-muted fs-sm" style="margin-top:4px;">Monthly comparison vs the previous 1, 3, and 6 months.</p>
           </div>
-          <div class="grade-info">
-            <h3 style="color:{{ perf.grade_color }};">{{ perf.grade_label }}</h3>
-            <p>Scored across 4 dimensions: Revenue Performance, Customer Loyalty, Market Reach, and Sales Activity.</p>
-          </div>
+          <div class="badge badge-blue">Store Coverage: {{ kpis.num_stores }} stores</div>
         </div>
-        <div class="score-bars">
-          {% set dims = [
-            ('Revenue Performance', perf.revenue_score, '#E8192C'),
-            ('Customer Loyalty',    perf.loyalty_score, '#1E8449'),
-            ('Market Reach',        perf.reach_score,   '#2E86C1'),
-            ('Sales Activity',      perf.activity_score,'#1B2B5E'),
+        <table class="detail-table" style="margin-top:0;">
+          <tr><th>Metric</th><th style="text-align:center;">1M</th><th style="text-align:center;">3M</th><th style="text-align:center;">6M</th></tr>
+          {% set metrics = [
+            ('Supermarket Growth', growth_outlook.metrics.supermarket_growth),
+            ('Avg Revenue / Supermarket', growth_outlook.metrics.avg_revenue_per_store_growth),
           ] %}
-          {% for label, score, color in dims %}
-          <div class="score-item">
-            <div class="score-item-label">{{ label }}</div>
-            <div class="score-item-bar-bg">
-              <div class="score-item-bar-fill"
-                   style="width:{{ score * 4 }}%;background:{{ color }};"></div>
-            </div>
-            <div class="score-item-val" style="color:{{ color }};">{{ score }}/25</div>
-          </div>
+          {% for label, row in metrics %}
+          <tr>
+            <td>{{ label }}</td>
+            {% for key in ['1m', '3m', '6m'] %}
+            {% set item = row.get(key, {}) %}
+            <td class="num" style="text-align:center;">
+              {% if item.eligible %}
+              <div style="font-weight:800;color:{% if item.direction == 'Growing' %}var(--green){% elif item.direction == 'Declining' %}var(--red){% else %}var(--navy){% endif %};">{{ '%+.1f'|format(item.change_pct) }}%</div>
+              <div style="font-size:10px;color:var(--muted);font-weight:600;">{{ item.direction }}</div>
+              {% else %}
+              <span class="text-muted">N/A</span>
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
           {% endfor %}
-        </div>
+        </table>
+        {% else %}
+        <p class="text-muted fs-sm">Monthly history is not deep enough yet for 1M / 3M / 6M growth comparisons.</p>
+        {% endif %}
       </div>
 
       <!-- Business Narrative -->

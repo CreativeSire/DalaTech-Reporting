@@ -212,6 +212,88 @@ def _merge_brand_histories(brand_histories):
     return result
 
 
+def _pct_change(current, baseline):
+    baseline = float(baseline or 0)
+    current = float(current or 0)
+    if baseline <= 0:
+        return None
+    return round(((current - baseline) / baseline) * 100, 1)
+
+
+def _growth_direction(change_pct):
+    if change_pct is None:
+        return 'N/A'
+    if change_pct >= 5:
+        return 'Growing'
+    if change_pct <= -5:
+        return 'Declining'
+    return 'Stable'
+
+
+def monthly_growth_outlook(history, horizons=(1, 3, 6)):
+    """
+    Compare the latest available monthly snapshot with prior monthly baselines.
+
+    For 1M, baseline is the prior month.
+    For 3M and 6M, baseline is the average of the prior N monthly snapshots.
+    """
+    monthly_rows = [dict(row) for row in (history or []) if row.get('report_type') == 'monthly']
+    monthly_rows.sort(key=lambda row: _month_index(row, 0))
+    if not monthly_rows:
+        return {
+            'available': False,
+            'anchor_label': None,
+            'metrics': {
+                'supermarket_growth': {},
+                'avg_revenue_per_store_growth': {},
+            },
+            'note': 'No monthly history available yet.',
+        }
+
+    anchor = monthly_rows[-1]
+    result = {
+        'available': True,
+        'anchor_label': anchor.get('month_label'),
+        'metrics': {
+            'supermarket_growth': {},
+            'avg_revenue_per_store_growth': {},
+        },
+        'note': None,
+    }
+
+    metric_map = (
+        ('supermarket_growth', 'num_stores', 'Stores'),
+        ('avg_revenue_per_store_growth', 'avg_revenue_per_store', 'Avg Revenue / Supermarket'),
+    )
+    for horizon in horizons:
+        if len(monthly_rows) <= horizon:
+            baseline_rows = []
+        else:
+            baseline_rows = monthly_rows[-(horizon + 1):-1]
+
+        for result_key, field_name, _label in metric_map:
+            if len(baseline_rows) < horizon:
+                result['metrics'][result_key][f'{horizon}m'] = {
+                    'change_pct': None,
+                    'direction': 'N/A',
+                    'current': anchor.get(field_name),
+                    'baseline': None,
+                    'eligible': False,
+                }
+                continue
+            baseline_values = [float(row.get(field_name, 0) or 0) for row in baseline_rows]
+            baseline = _mean(baseline_values)
+            change_pct = _pct_change(anchor.get(field_name, 0), baseline)
+            result['metrics'][result_key][f'{horizon}m'] = {
+                'change_pct': change_pct,
+                'direction': _growth_direction(change_pct),
+                'current': round(float(anchor.get(field_name, 0) or 0), 2),
+                'baseline': round(float(baseline or 0), 2),
+                'eligible': change_pct is not None,
+            }
+    return result
+
+
 def multi_horizon_revenue_forecast(history, horizons=(1, 3, 6, 12)):
     """
     Build a multi-horizon forecast set for one brand.
@@ -261,6 +343,7 @@ def multi_horizon_revenue_forecast(history, horizons=(1, 3, 6, 12)):
         }
 
     primary = horizon_rows['1m']
+    growth_outlook = monthly_growth_outlook(history)
     return {
         'forecast': primary['forecast'],
         'confidence': confidence,
@@ -274,6 +357,7 @@ def multi_horizon_revenue_forecast(history, horizons=(1, 3, 6, 12)):
         'growth_color': growth_color(growth),
         'eligible_horizons': eligible_horizons,
         'horizons': horizon_rows,
+        'growth_outlook': growth_outlook,
     }
 
 

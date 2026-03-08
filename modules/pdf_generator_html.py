@@ -19,6 +19,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from playwright.sync_api import sync_playwright
 
 from .kpi import generate_narrative, calculate_perf_score
+from .predictor import monthly_growth_outlook
 from .charts_html import (
     chart_top_stores,
     chart_product_value,
@@ -440,7 +441,8 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
                            report_type: str | None = None,
                            month_label: str | None = None,
                            ai_narrative: str = None,
-                           sheets_url: str = None) -> str:
+                           sheets_url: str = None,
+                           growth_outlook: dict | None = None) -> str:
     """Render the print-oriented report HTML used for PDF export."""
     # ── Charts (matplotlib → base64) ──────────────────────────────────────────
     # Use _for_print=True so charts are generated at print-optimised sizes
@@ -459,6 +461,7 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
 
     # ── Performance scorecard ──────────────────────────────────────────────────
     perf = calculate_perf_score(kpis, portfolio_avg_revenue)
+    growth_outlook = growth_outlook or monthly_growth_outlook([])
 
     # ── Portfolio share ────────────────────────────────────────────────────────
     portfolio_share = None
@@ -610,6 +613,7 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
         closing_stock_table=closing_stock_table,
         pickup_table=pickup_table,
         supply_table=supply_table,
+        growth_outlook=growth_outlook,
     )
 
 
@@ -873,7 +877,8 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
                       report_type: str | None = None,
                       month_label: str | None = None,
                       ai_narrative: str = None,
-                      sheets_url: str = None) -> str:
+                      sheets_url: str = None,
+                      growth_outlook: dict | None = None) -> str:
     """
     Generate a 2-page PDF using HTML template + Playwright.
 
@@ -901,6 +906,7 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
         month_label=month_label,
         ai_narrative=ai_narrative,
         sheets_url=sheets_url,
+        growth_outlook=growth_outlook,
     )
 
     # ── Render to PDF via Playwright ───────────────────────────────────────────

@@ -47,6 +47,8 @@ from modules.portfolio_generator import generate_portfolio_html
 from modules.data_store       import DataStore
 from modules.alerts           import check_and_save_alerts, run_portfolio_alerts
 from modules.predictor        import build_brand_forecasts, stock_depletion_date, growth_label, growth_color
+from modules.activity_intelligence import load_activity_dataframe, build_activity_payload
+from modules.agent_copilot    import build_default_agent_actions, answer_admin_query
 from modules.historical       import (
     get_brand_monthly_history, get_portfolio_monthly_trend,
     get_repeat_purchase_map_data, generate_insights,
@@ -681,6 +683,10 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             """Attempt PDF generation with retries. Returns (success, is_pdf, error)."""
             for attempt in range(max_retries):
                 try:
+                    growth_history = list(reversed(ds.get_brand_history(brand_name, limit=36)))
+                    growth_outlook = build_brand_forecasts({brand_name: growth_history}).get(
+                        ds.analytics_brand_name(brand_name), {}
+                    ).get('growth_outlook')
                     result_path = generate_pdf_html(
                         output_path=pdf_path, brand_name=brand_name, kpis=kpis,
                         start_date=start_date, end_date=end_date,
@@ -690,6 +696,7 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                         month_label=report_meta.get('month_label'),
                         ai_narrative=ai_narratives.get(brand_name),
                         sheets_url=sheets_urls.get(brand_name),
+                        growth_outlook=growth_outlook,
                     )
                     # Check if PDF was actually created or if HTML fallback was used
                     is_pdf = result_path.endswith('.pdf') and os.path.exists(result_path)
@@ -711,12 +718,17 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             """Attempt HTML generation with retries."""
             for attempt in range(max_retries):
                 try:
+                    growth_history = list(reversed(ds.get_brand_history(brand_name, limit=36)))
+                    growth_outlook = build_brand_forecasts({brand_name: growth_history}).get(
+                        ds.analytics_brand_name(brand_name), {}
+                    ).get('growth_outlook')
                     generate_html(output_path=html_path, brand_name=brand_name, kpis=kpis,
                                   start_date=start_date, end_date=end_date,
                                   portfolio_avg_revenue=portfolio_avg_revenue,
                                   total_portfolio_revenue=total_portfolio_revenue,
                                   report_type=report_type or report_meta.get('report_type'),
-                                  month_label=report_meta.get('month_label'))
+                                  month_label=report_meta.get('month_label'),
+                                  growth_outlook=growth_outlook)
                     return True, None
                 except Exception as e:
                     if attempt < max_retries - 1:
@@ -1305,6 +1317,7 @@ def brands():
 # ── Brand detail ──────────────────────────────────────────────────────────────
 
 @app.route('/brand/<path:brand_name>')
+@app.route('/brand-360/<path:brand_name>')
 def brand_detail(brand_name):
     latest = ds.get_latest_report()
     report_id = request.args.get('report_id', latest['id'] if latest else None, type=int)
@@ -1315,11 +1328,12 @@ def brand_detail(brand_name):
 
     # Historical trend
     history = ds.get_brand_history(brand_name, limit=12)
+    forecast_history = list(reversed(ds.get_brand_history(brand_name, limit=36)))
     hist_oldest = list(reversed(history))
 
     # Forecast
     canonical_brand = ds.analytics_brand_name(brand_name)
-    forecast = build_brand_forecasts({brand_name: hist_oldest}).get(canonical_brand, {})
+    forecast = build_brand_forecasts({brand_name: forecast_history}).get(canonical_brand, {})
 
     # Daily sales
     daily = ds.get_daily_sales(report_id, brand_name) if report_id else []
@@ -1344,6 +1358,7 @@ def brand_detail(brand_name):
     churn_data = ds.get_store_churn(report_id, brand_name) if report_id else []
     churned_stores = [c for c in churn_data if c['churn_type'] == 'churned']
     new_stores = [c for c in churn_data if c['churn_type'] == 'new']
+    brand_activity = ds.get_activity_brand_summary(brand_name, limit=8)
 
     return render_template('portal/brand_detail.html',
                            brand_name=brand_name,
@@ -1361,7 +1376,8 @@ def brand_detail(brand_name):
                            yoy_kpi=yoy_kpi,
                            yoy_rev_pct=yoy_rev_pct,
                            churned_stores=churned_stores,
-                           new_stores=new_stores)
+                           new_stores=new_stores,
+                           brand_activity=brand_activity)
 
 
 # ── History ───────────────────────────────────────────────────────────────────
@@ -1508,8 +1524,9 @@ def brand_portal(token):
 
     kpis    = ds.get_brand_kpis_single(report_id, brand_name) if report_id else None
     history = ds.get_brand_history(brand_name, limit=12)
+    forecast_history = list(reversed(ds.get_brand_history(brand_name, limit=36)))
     hist_oldest = list(reversed(history))
-    forecast = build_brand_forecasts({brand_name: hist_oldest}).get(ds.analytics_brand_name(brand_name), {})
+    forecast = build_brand_forecasts({brand_name: forecast_history}).get(ds.analytics_brand_name(brand_name), {})
     daily   = ds.get_daily_sales(report_id, brand_name) if report_id else []
 
     # PDF link
@@ -1537,6 +1554,7 @@ def brand_portal(token):
 
     # Activity log for this brand (last 5 entries)
     activity_log = ds.get_activity_log(brand_name=brand_name, limit=5)
+    brand_activity = ds.get_activity_brand_summary(brand_name, limit=6)
 
     return render_template('portal/brand_portal.html',
                            brand_name=brand_name,
@@ -1550,7 +1568,8 @@ def brand_portal(token):
                            target=target,
                            portfolio_rank=portfolio_rank,
                            portfolio_total=portfolio_total,
-                           activity_log=activity_log)
+                           activity_log=activity_log,
+                           brand_activity=brand_activity)
 
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
@@ -1904,6 +1923,10 @@ def _build_brand_report_pdf_bytes(report_id: int, brand_name: str,
     all_brand_kpis = all_brand_kpis or ds.get_all_brand_kpis(report_id)
     total_portfolio = sum(b['total_revenue'] for b in all_brand_kpis)
     avg_portfolio   = total_portfolio / max(len(all_brand_kpis), 1)
+    growth_history = list(reversed(ds.get_brand_history(brand_name, limit=36)))
+    growth_outlook = build_brand_forecasts({brand_name: growth_history}).get(
+        ds.analytics_brand_name(brand_name), {}
+    ).get('growth_outlook')
 
     # Use the premium 2-page print template (report_template.html)
     html = render_pdf_report_html(
@@ -1915,6 +1938,7 @@ def _build_brand_report_pdf_bytes(report_id: int, brand_name: str,
         total_portfolio_revenue=total_portfolio,
         report_type=report.get('report_type'),
         month_label=report.get('month_label'),
+        growth_outlook=growth_outlook,
     )
     return render_pdf_bytes(html)
 
@@ -1923,6 +1947,7 @@ _REPORT_DEPENDENCY_PATHS = [
     os.path.join(os.path.dirname(__file__), 'templates', 'report_template.html'),
     os.path.join(os.path.dirname(__file__), 'modules', 'pdf_generator_html.py'),
     os.path.join(os.path.dirname(__file__), 'modules', 'charts_html.py'),
+    os.path.join(os.path.dirname(__file__), 'modules', 'predictor.py'),
 ]
 
 
@@ -2090,6 +2115,10 @@ def api_report_html(report_id, brand_name):
     all_bk          = ds.get_all_brand_kpis(report_id)
     total_portfolio = sum(b['total_revenue'] for b in all_bk)
     avg_portfolio   = total_portfolio / max(len(all_bk), 1)
+    growth_history = list(reversed(ds.get_brand_history(brand_name, limit=36)))
+    growth_outlook = build_brand_forecasts({brand_name: growth_history}).get(
+        ds.analytics_brand_name(brand_name), {}
+    ).get('growth_outlook')
 
     try:
         html_content = render_html_report(
@@ -2101,6 +2130,7 @@ def api_report_html(report_id, brand_name):
             total_portfolio_revenue=total_portfolio,
             report_type=report.get('report_type'),
             month_label=report.get('month_label'),
+            growth_outlook=growth_outlook,
         )
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -2129,7 +2159,7 @@ def forecasting():
                                stable_count=0, stock_warning_count=0,
                                report=None, alert_count=alert_count)
 
-    brand_histories = {b: list(reversed(ds.get_brand_history(b, limit=12)))
+    brand_histories = {b: list(reversed(ds.get_brand_history(b, limit=36)))
                        for b in all_brands}
     forecasts = build_brand_forecasts(brand_histories)
 
@@ -2480,10 +2510,176 @@ def api_export_alerts():
 
 # ── Activity Log API ──────────────────────────────────────────────────────────
 
+@app.route('/activity-intelligence')
+def activity_intelligence():
+    alert_count = ds.get_unacknowledged_count()
+    latest_report = ds.get_latest_report()
+    report_id = request.args.get('report_id', latest_report['id'] if latest_report else None, type=int)
+    batch_id = request.args.get('batch_id', type=int)
+    brand_name = (request.args.get('brand') or '').strip() or None
+    summary = ds.get_activity_summary(batch_id=batch_id, report_id=report_id, brand_name=brand_name)
+    batches = ds.get_activity_batches(limit=30)
+    return render_template(
+        'portal/activity_intelligence.html',
+        alert_count=alert_count,
+        report=ds.get_report(report_id) if report_id else None,
+        reports=ds.get_all_reports(),
+        batches=batches,
+        selected_batch_id=batch_id,
+        selected_brand=brand_name,
+        summary=summary,
+    )
+
+
+@app.route('/store-360/<path:retailer_code>')
+def store_360(retailer_code):
+    alert_count = ds.get_unacknowledged_count()
+    summary = ds.get_store_activity_summary(retailer_code)
+    if not summary.get('store'):
+        abort(404)
+    return render_template(
+        'portal/store_360.html',
+        alert_count=alert_count,
+        retailer_code=retailer_code,
+        summary=summary,
+    )
+
+
+@app.route('/copilot')
+def copilot_dashboard():
+    alert_count = ds.get_unacknowledged_count()
+    report = ds.get_latest_report()
+    if report:
+        build_default_agent_actions(ds, report)
+    pending_actions = ds.list_agent_actions(status='pending', limit=25)
+    summary = ds.get_activity_summary(report_id=report['id']) if report else {'totals': {}}
+    return render_template(
+        'portal/copilot.html',
+        alert_count=alert_count,
+        report=report,
+        pending_actions=pending_actions,
+        activity_summary=summary,
+    )
+
+
+@app.route('/agent-actions')
+def agent_actions_page():
+    alert_count = ds.get_unacknowledged_count()
+    report = ds.get_latest_report()
+    if report:
+        build_default_agent_actions(ds, report)
+    status = request.args.get('status', 'pending')
+    actions = ds.list_agent_actions(status=status, limit=100)
+    return render_template(
+        'portal/agent_actions.html',
+        alert_count=alert_count,
+        report=report,
+        actions=actions,
+        selected_status=status,
+    )
+
+
 @app.route('/api/activity')
 def api_activity():
     limit = min(int(request.args.get('limit', 50)), 200)
     return jsonify(ds.get_activity_log(limit=limit))
+
+
+@app.route('/api/activity/import', methods=['POST'])
+def api_activity_import():
+    uploaded = request.files.get('file') or request.files.get('activity_file')
+    if not uploaded or uploaded.filename == '':
+        return jsonify({'success': False, 'error': 'No activity file uploaded.'}), 400
+
+    explicit_report_id = request.form.get('report_id', type=int)
+    try:
+        df, meta = load_activity_dataframe(uploaded)
+    except Exception as exc:
+        return jsonify({'success': False, 'error': f'Could not parse activity file: {exc}'}), 422
+
+    report_id = explicit_report_id
+    if not report_id and not df.empty:
+        inferred = ds.find_report_covering_range(df['activity_date'].min(), df['activity_date'].max())
+        report_id = inferred['id'] if inferred else None
+
+    try:
+        payload = build_activity_payload(df, ds=ds, source_filename=uploaded.filename, report_id=report_id)
+        batch_id = ds.save_activity_import(
+            payload,
+            source_filename=uploaded.filename,
+            source_type=meta.get('source_type'),
+            report_id=report_id,
+        )
+        linked_report = ds.get_report(report_id) if report_id else None
+        if linked_report:
+            build_default_agent_actions(ds, linked_report)
+        return jsonify({
+            'success': True,
+            'batch_id': batch_id,
+            'report_id': report_id,
+            'summary': payload.get('summary', {}),
+        })
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+
+@app.route('/api/activity/summary')
+def api_activity_summary():
+    batch_id = request.args.get('batch_id', type=int)
+    report_id = request.args.get('report_id', type=int)
+    brand_name = (request.args.get('brand_name') or '').strip() or None
+    return jsonify(ds.get_activity_summary(batch_id=batch_id, report_id=report_id, brand_name=brand_name))
+
+
+@app.route('/api/activity/brand/<path:brand_name>')
+def api_activity_brand_summary(brand_name):
+    return jsonify(ds.get_activity_brand_summary(brand_name))
+
+
+@app.route('/api/activity/store/<path:retailer_code>')
+def api_activity_store_summary(retailer_code):
+    return jsonify(ds.get_store_activity_summary(retailer_code))
+
+
+@app.route('/api/copilot/query', methods=['POST'])
+def api_copilot_query():
+    payload = request.get_json(silent=True) or request.form or {}
+    question = str(payload.get('question') or '').strip()
+    brand_name = str(payload.get('brand_name') or '').strip() or None
+    if not question:
+        return jsonify({'success': False, 'error': 'question is required'}), 400
+    report = ds.get_latest_report()
+    if report:
+        build_default_agent_actions(ds, report)
+    result = answer_admin_query(ds, question, report=report, brand_name=brand_name)
+    return jsonify({'success': True, **result})
+
+
+@app.route('/api/agent-actions')
+def api_agent_actions():
+    status = request.args.get('status', 'pending')
+    report = ds.get_latest_report()
+    if report:
+        build_default_agent_actions(ds, report)
+    return jsonify(ds.list_agent_actions(status=status, limit=100))
+
+
+@app.route('/api/agent-actions/<int:action_id>/approve', methods=['POST'])
+def api_agent_action_approve(action_id):
+    note = (request.get_json(silent=True) or {}).get('note')
+    action = ds.update_agent_action_status(action_id, 'approved', actor='admin', note=note)
+    if not action:
+        return jsonify({'success': False, 'error': 'Action not found'}), 404
+    return jsonify({'success': True, 'action': action})
+
+
+@app.route('/api/agent-actions/<int:action_id>/reject', methods=['POST'])
+def api_agent_action_reject(action_id):
+    note = (request.get_json(silent=True) or {}).get('note')
+    action = ds.update_agent_action_status(action_id, 'rejected', actor='admin', note=note)
+    if not action:
+        return jsonify({'success': False, 'error': 'Action not found'}), 404
+    return jsonify({'success': True, 'action': action})
 
 
 # ── AI Narrative API ───────────────────────────────────────────────────────────
@@ -2681,10 +2877,10 @@ def whatsapp_webhook():
         wow_str = (f"▲{wow}%" if wow > 0 else (f"▼{abs(wow)}%" if wow < 0 else "—")) + " WoW"
         lines = [
             f"{matched} — {report['month_label']}",
-            f"Grade: {kpis.get('perf_grade','-')} ({kpis.get('perf_score',0)}/100)",
             f"Revenue: N{kpis.get('total_revenue',0):,.0f} ({wow_str})",
             f"Qty: {kpis.get('total_qty',0):,.1f} packs",
             f"Stores: {kpis.get('num_stores',0)} | Repeat: {kpis.get('repeat_pct',0):.1f}%",
+            f"Avg Rev / Supermarket: N{kpis.get('avg_revenue_per_store',0):,.0f}",
             f"Stock Days: {kpis.get('stock_days_cover',0):.0f}",
         ]
         return twiml_reply('\n'.join(lines))
@@ -2704,7 +2900,7 @@ def whatsapp_webhook():
         top_brands = sorted(kpis_all, key=lambda x: x.get('total_revenue', 0), reverse=True)[:n]
         lines = [f"Top {n} Brands — {report['month_label']}:"]
         for i, b in enumerate(top_brands, 1):
-            lines.append(f"{i}. {b['brand_name']}: N{b['total_revenue']:,.0f} (Grade {b.get('perf_grade','-')})")
+            lines.append(f"{i}. {b['brand_name']}: N{b['total_revenue']:,.0f}")
         return twiml_reply('\n'.join(lines))
 
     # ── ALERTS ────────────────────────────────────────────────────────────────
@@ -2768,18 +2964,17 @@ def whatsapp_webhook():
         if not kpis:
             return twiml_reply(f"{matched} has no data in the latest report.")
 
-        grade  = kpis.get('perf_grade', '-')
-        score  = kpis.get('perf_score', 0)
         rev    = kpis.get('total_revenue', 0)
         stores = kpis.get('num_stores', 0)
         repeat = kpis.get('repeat_pct', 0)
         stock  = kpis.get('stock_days_cover', 0)
+        avg_store = kpis.get('avg_revenue_per_store', 0)
 
         lines = [
             f"{matched} — {report['month_label']}",
-            f"Grade: {grade} ({score}/100)",
             f"Revenue: N{rev:,.0f}",
             f"Stores: {stores} | Repeat: {repeat:.1f}%",
+            f"Avg Rev / Supermarket: N{avg_store:,.0f}",
             f"Stock Days: {stock:.0f}",
         ]
 

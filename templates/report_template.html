@@ -945,62 +945,65 @@
   <!-- ── Tagline ─────────────────────────────────────────────────────────── -->
   <div class="tagline-bar">BOOSTING REVENUE AND ENHANCING BRAND VALUE</div>
 
-  <!-- ── Performance Scorecard ───────────────────────────────────────────── -->
+  <!-- ── Growth Outlook ──────────────────────────────────────────────────── -->
   <div class="scorecard-band">
-
-    <!-- Grade letter -->
-    <div class="sc-grade-block">
-      <div class="sc-grade-letter" style="color:{{ perf.grade_color }};">{{ perf.grade }}</div>
-      <div class="sc-grade-label" style="color:{{ perf.grade_color }};">{{ perf.grade_label }}</div>
-    </div>
-
-    <div class="sc-divider"></div>
-
-    <!-- Sub-score bars -->
-    <div class="sc-metrics">
-      <div class="sc-metric-row">
-        <div class="sc-metric-label">Revenue</div>
-        <div class="sc-bar-track">
-          <div class="sc-bar-fill" style="width:{{ (perf.revenue_score / 25 * 100)|round(0) }}%;background:{{ perf.grade_color }};"></div>
-        </div>
-        <div class="sc-metric-score">{{ perf.revenue_score }}/25</div>
-      </div>
-      <div class="sc-metric-row">
-        <div class="sc-metric-label">Loyalty</div>
-        <div class="sc-bar-track">
-          <div class="sc-bar-fill" style="width:{{ (perf.loyalty_score / 25 * 100)|round(0) }}%;background:#1B2B5E;"></div>
-        </div>
-        <div class="sc-metric-score">{{ perf.loyalty_score }}/25</div>
-      </div>
-      <div class="sc-metric-row">
-        <div class="sc-metric-label">Reach</div>
-        <div class="sc-bar-track">
-          <div class="sc-bar-fill" style="width:{{ (perf.reach_score / 25 * 100)|round(0) }}%;background:#1A7A4A;"></div>
-        </div>
-        <div class="sc-metric-score">{{ perf.reach_score }}/25</div>
-      </div>
-      <div class="sc-metric-row">
-        <div class="sc-metric-label">Activity</div>
-        <div class="sc-bar-track">
-          <div class="sc-bar-fill" style="width:{{ (perf.activity_score / 25 * 100)|round(0) }}%;background:#C0922A;"></div>
-        </div>
-        <div class="sc-metric-score">{{ perf.activity_score }}/25</div>
+    <div style="min-width:150px;">
+      <div class="score-kicker">Growth Outlook</div>
+      <div style="font-size:14pt;font-weight:800;color:#1B2B5E;line-height:1.1;">{{ growth_outlook.anchor_label if growth_outlook and growth_outlook.available else month_label }}</div>
+      <div style="font-size:6pt;color:#8793AA;margin-top:4px;line-height:1.5;">
+        Monthly trend vs the previous 1, 3, and 6 months.
       </div>
     </div>
 
     <div class="sc-divider"></div>
 
-    <!-- Total score + portfolio share -->
+    <div style="flex:1;">
+      <table style="width:100%;border-collapse:collapse;font-size:6.2pt;">
+        <thead>
+          <tr style="text-transform:uppercase;color:#7A849E;letter-spacing:0.4px;font-size:5.2pt;">
+            <th style="text-align:left;padding-bottom:5px;">Metric</th>
+            <th style="text-align:center;padding-bottom:5px;">1M</th>
+            <th style="text-align:center;padding-bottom:5px;">3M</th>
+            <th style="text-align:center;padding-bottom:5px;">6M</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% set metrics = [
+            ('Supermarket Growth', growth_outlook.metrics.supermarket_growth if growth_outlook else {}),
+            ('Avg Revenue / Supermarket', growth_outlook.metrics.avg_revenue_per_store_growth if growth_outlook else {}),
+          ] %}
+          {% for label, row in metrics %}
+          <tr>
+            <td style="padding:7px 0;border-top:1px solid #E1E6F0;font-weight:700;color:#1B2B5E;">{{ label }}</td>
+            {% for key in ['1m', '3m', '6m'] %}
+            {% set item = row.get(key, {}) %}
+            <td style="padding:7px 4px;border-top:1px solid #E1E6F0;text-align:center;">
+              {% if item.eligible %}
+                <div style="font-weight:800;color:{% if item.direction == 'Growing' %}#1E8449{% elif item.direction == 'Declining' %}#E8192C{% else %}#1B2B5E{% endif %};">
+                  {{ '%+.1f'|format(item.change_pct) }}%
+                </div>
+                <div style="font-size:5.2pt;color:#7A849E;">{{ item.direction }}</div>
+              {% else %}
+                <span style="color:#9AA3B3;">N/A</span>
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="sc-divider"></div>
+
     <div class="sc-total-block">
-      <div class="score-kicker">Overall Score</div>
+      <div class="score-kicker">Store Coverage</div>
       <div class="score-line">
-        <div class="sc-total-num">{{ perf.total }}</div>
-        <div class="score-denom">/100</div>
+        <div class="sc-total-num">{{ num_stores }}</div>
+        <div class="score-denom">stores</div>
       </div>
-      {% if portfolio_share %}
-      <div class="score-share-kicker">Portfolio Share</div>
-      <div style="font-size:11pt;font-weight:800;color:#1B2B5E;line-height:1;">{{ portfolio_share }}%</div>
-      {% endif %}
+      <div class="score-share-kicker">Avg Rev / Store</div>
+      <div style="font-size:11pt;font-weight:800;color:#1B2B5E;line-height:1;">₦{{ "{:,.0f}".format(kpis.avg_revenue_per_store or 0) }}</div>
     </div>
 
   </div>

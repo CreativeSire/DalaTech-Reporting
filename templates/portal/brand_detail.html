@@ -131,6 +131,75 @@
 
 </div>
 
+<div class="grid-2" style="margin-bottom:20px;">
+  <div class="card">
+    <h4 style="color:var(--navy);margin-bottom:12px;">Growth Outlook</h4>
+    {% set go = forecast.growth_outlook if forecast else None %}
+    {% if go and go.available %}
+    <table class="data-table">
+      <thead>
+        <tr><th>Metric</th><th>1M</th><th>3M</th><th>6M</th></tr>
+      </thead>
+      <tbody>
+        {% set metrics = [
+          ('Supermarket Growth', go.metrics.supermarket_growth),
+          ('Avg Revenue / Supermarket', go.metrics.avg_revenue_per_store_growth),
+        ] %}
+        {% for label, row in metrics %}
+        <tr>
+          <td>{{ label }}</td>
+          {% for key in ['1m', '3m', '6m'] %}
+          {% set item = row.get(key, {}) %}
+          <td>
+            {% if item.eligible %}
+              <div class="fw-bold">{{ '%+.1f'|format(item.change_pct) }}%</div>
+              <div class="fs-sm text-muted">{{ item.direction }}</div>
+            {% else %}
+              <span class="text-muted">N/A</span>
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="text-muted fs-sm" style="margin-top:10px;">Anchor month: {{ go.anchor_label }}</p>
+    {% else %}
+    <p class="text-muted fs-sm">Monthly history is not deep enough yet for 1M / 3M / 6M growth comparisons.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <div class="flex items-center justify-between" style="margin-bottom:12px;">
+      <h4 style="color:var(--navy);">Activity Intelligence</h4>
+      <a href="{{ url_for('activity_intelligence', brand=brand_name) }}" class="btn btn-outline btn-sm">Open Activity View</a>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <div style="display:flex;justify-content:space-between;"><span class="text-muted">Brand Mentions</span><strong>{{ brand_activity.mentions or 0 }}</strong></div>
+      <div style="display:flex;justify-content:space-between;"><span class="text-muted">Stores Seen</span><strong>{{ brand_activity.stores or 0 }}</strong></div>
+      <div style="display:flex;justify-content:space-between;"><span class="text-muted">Active Days</span><strong>{{ brand_activity.active_days or 0 }}</strong></div>
+      {% if brand_activity.latest_visit %}
+      <div style="padding:10px;border-radius:10px;background:var(--bg);margin-top:4px;">
+        <div class="kpi-label">Latest Field Visit</div>
+        <div class="fw-bold">{{ brand_activity.latest_visit.retailer_name or 'Unknown store' }}</div>
+        <div class="fs-sm text-muted">{{ brand_activity.latest_visit.activity_date }} · {{ brand_activity.latest_visit.salesman_name or 'Unknown SE' }}</div>
+      </div>
+      {% endif %}
+      {% if brand_activity.issue_counts %}
+      <div style="margin-top:4px;">
+        <div class="kpi-label" style="margin-bottom:6px;">Top Field Issues</div>
+        {% for issue in brand_activity.issue_counts[:4] %}
+        <div style="display:flex;justify-content:space-between;padding:4px 0;">
+          <span>{{ issue.issue_type|replace('_', ' ')|title }}</span>
+          <strong>{{ issue.count }}</strong>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
 <!-- Inventory + KPI Details -->
 <div class="grid-2" style="margin-bottom:20px;">
   <div class="card">

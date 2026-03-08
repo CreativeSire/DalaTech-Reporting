@@ -138,6 +138,45 @@
     {% endfor %}
   </div>
 
+  {% set go = fc.growth_outlook %}
+  <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--gray);">
+    <div class="kpi-label" style="margin-bottom:6px;">Store & Revenue / Supermarket Growth</div>
+    {% if go and go.available %}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:11px;">
+      <div>
+        <div class="text-muted" style="margin-bottom:4px;">Supermarket Growth</div>
+        {% for key, label in [('1m','1M'), ('3m','3M'), ('6m','6M')] %}
+        {% set item = go.metrics.supermarket_growth.get(key, {}) %}
+        <div style="display:flex;justify-content:space-between;padding:2px 0;">
+          <span>{{ label }}</span>
+          {% if item.eligible %}
+          <strong>{{ '%+.1f'|format(item.change_pct) }}%</strong>
+          {% else %}
+          <span class="text-muted">N/A</span>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      <div>
+        <div class="text-muted" style="margin-bottom:4px;">Avg Revenue / Supermarket</div>
+        {% for key, label in [('1m','1M'), ('3m','3M'), ('6m','6M')] %}
+        {% set item = go.metrics.avg_revenue_per_store_growth.get(key, {}) %}
+        <div style="display:flex;justify-content:space-between;padding:2px 0;">
+          <span>{{ label }}</span>
+          {% if item.eligible %}
+          <strong>{{ '%+.1f'|format(item.change_pct) }}%</strong>
+          {% else %}
+          <span class="text-muted">N/A</span>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <div class="text-muted fs-sm">Insufficient monthly history for 1M / 3M / 6M growth comparisons.</div>
+    {% endif %}
+  </div>
+
   <div class="horizon-grid">
     {% for key, label in [('3m', '3 Months'), ('6m', '6 Months'), ('12m', '12 Months')] %}
     {% set hz = fc.horizons.get(key, {}) %}

@@ -14,6 +14,7 @@ import plotly.graph_objects as go
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .kpi import generate_narrative, calculate_perf_score
+from .predictor import monthly_growth_outlook
 
 BASE_DIR     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
@@ -482,7 +483,8 @@ def render_html_report(brand_name: str, kpis: dict,
                        total_portfolio_revenue: float = None,
                        report_type: str | None = None,
                        month_label: str | None = None,
-                       ai_narrative: str = None) -> str:
+                       ai_narrative: str = None,
+                       growth_outlook: dict | None = None) -> str:
     """Render the standalone interactive HTML report and return the HTML string."""
     # ── Plotly chart divs ─────────────────────────────────────────────────────
     chart_trend    = plotly_dual_trend(kpis['daily_sales'])
@@ -494,6 +496,7 @@ def render_html_report(brand_name: str, kpis: dict,
 
     # ── Scorecard ─────────────────────────────────────────────────────────────
     perf = calculate_perf_score(kpis, portfolio_avg_revenue)
+    growth_outlook = growth_outlook or monthly_growth_outlook([])
 
     # ── Portfolio share ───────────────────────────────────────────────────────
     portfolio_share = None
@@ -591,6 +594,7 @@ def render_html_report(brand_name: str, kpis: dict,
         chart_heatmap=chart_heatmap,
         chart_stock=chart_stock,
         chart_reorder=chart_reorder,
+        growth_outlook=growth_outlook,
     )
 
     return html_content
@@ -602,7 +606,8 @@ def generate_html(output_path: str, brand_name: str, kpis: dict,
                   total_portfolio_revenue: float = None,
                   report_type: str | None = None,
                   month_label: str | None = None,
-                  ai_narrative: str = None) -> str:
+                  ai_narrative: str = None,
+                  growth_outlook: dict | None = None) -> str:
     """
     Generate a standalone interactive HTML report using Plotly.
 
@@ -627,6 +632,7 @@ def generate_html(output_path: str, brand_name: str, kpis: dict,
         report_type=report_type,
         month_label=month_label,
         ai_narrative=ai_narrative,
+        growth_outlook=growth_outlook,
     )
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)

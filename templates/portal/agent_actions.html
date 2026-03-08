@@ -1,0 +1,74 @@
+{% extends "portal/base.html" %}
+{% block title %}Agent Actions — DALA Analytics{% endblock %}
+{% block page_title %}Agent Actions{% endblock %}
+
+{% block topbar_actions %}
+<span class="text-muted fs-sm">{{ report.month_label if report else 'No report yet' }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="flex items-center justify-between mb-2">
+    <div>
+      <h3 class="text-navy fw-bold">Approval Queue</h3>
+      <p class="text-muted fs-sm">Agents can draft actions, but nothing important applies automatically.</p>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <a href="{{ url_for('agent_actions_page', status='pending') }}" class="btn {% if selected_status=='pending' %}btn-navy{% else %}btn-outline{% endif %} btn-sm">Pending</a>
+      <a href="{{ url_for('agent_actions_page', status='all') }}" class="btn {% if selected_status=='all' %}btn-navy{% else %}btn-outline{% endif %} btn-sm">All</a>
+    </div>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Agent</th>
+        <th>Subject</th>
+        <th>Priority</th>
+        <th>Status</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for action in actions %}
+      <tr data-action-id="{{ action.id }}">
+        <td>
+          <div class="fw-bold">{{ action.title }}</div>
+          {% if action.reason %}<div class="fs-sm text-muted">{{ action.reason }}</div>{% endif %}
+        </td>
+        <td>{{ action.agent_type }}</td>
+        <td>{{ action.subject_key }}</td>
+        <td><span class="badge {% if action.priority in ['high','critical'] %}badge-red{% else %}badge-amber{% endif %}">{{ action.priority }}</span></td>
+        <td><span class="badge {% if action.status == 'approved' %}badge-green{% elif action.status == 'rejected' %}badge-red{% else %}badge-blue{% endif %}">{{ action.status }}</span></td>
+        <td>
+          {% if action.status == 'pending' %}
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-green btn-sm" onclick="updateAction({{ action.id }}, 'approve')">Approve</button>
+            <button class="btn btn-outline btn-sm" onclick="updateAction({{ action.id }}, 'reject')">Reject</button>
+          </div>
+          {% else %}
+          <span class="text-muted fs-sm">Reviewed</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="6" class="text-muted">No agent actions yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function updateAction(actionId, verb) {
+  const res = await fetch(`/api/agent-actions/${actionId}/${verb}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+  const data = await res.json();
+  if (data.success) {
+    window.location.reload();
+    return;
+  }
+  alert(data.error || 'Action update failed.');
+}
+</script>
+{% endblock %}

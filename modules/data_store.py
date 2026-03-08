@@ -419,8 +419,174 @@ class DataStore:
                     FOREIGN KEY (report_id) REFERENCES reports(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS activity_batches (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_filename TEXT NOT NULL,
+                    source_type    TEXT,
+                    report_id      INTEGER,
+                    start_date     TEXT,
+                    end_date       TEXT,
+                    row_count      INTEGER DEFAULT 0,
+                    import_status  TEXT DEFAULT 'imported',
+                    summary_json   TEXT DEFAULT '{}',
+                    created_at     TEXT NOT NULL,
+                    updated_at     TEXT NOT NULL,
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS activity_events (
+                    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+                    batch_id             INTEGER NOT NULL,
+                    report_id            INTEGER,
+                    activity_date        TEXT,
+                    salesman_name        TEXT,
+                    salesman_code        TEXT,
+                    salesman_designation TEXT,
+                    reporting_person_name TEXT,
+                    survey_code          TEXT,
+                    survey_name          TEXT,
+                    survey_start_date    TEXT,
+                    survey_end_date      TEXT,
+                    retailer_code        TEXT,
+                    retailer_name        TEXT,
+                    retailer_type        TEXT,
+                    retailer_state       TEXT,
+                    retailer_district    TEXT,
+                    retailer_city        TEXT,
+                    question             TEXT,
+                    answer_type          TEXT,
+                    label                TEXT,
+                    answer               TEXT,
+                    created_at           TEXT NOT NULL,
+                    FOREIGN KEY (batch_id) REFERENCES activity_batches(id),
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS activity_visits (
+                    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                    batch_id          INTEGER NOT NULL,
+                    report_id         INTEGER,
+                    visit_key         TEXT NOT NULL,
+                    activity_date     TEXT,
+                    salesman_name     TEXT,
+                    survey_name       TEXT,
+                    retailer_code     TEXT,
+                    retailer_name     TEXT,
+                    retailer_state    TEXT,
+                    retailer_city     TEXT,
+                    event_count       INTEGER DEFAULT 0,
+                    issue_count       INTEGER DEFAULT 0,
+                    opportunity_count INTEGER DEFAULT 0,
+                    photo_count       INTEGER DEFAULT 0,
+                    created_at        TEXT NOT NULL,
+                    UNIQUE(batch_id, visit_key),
+                    FOREIGN KEY (batch_id) REFERENCES activity_batches(id),
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS activity_issues (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    batch_id      INTEGER NOT NULL,
+                    report_id     INTEGER,
+                    activity_date TEXT,
+                    retailer_code TEXT,
+                    retailer_name TEXT,
+                    salesman_name TEXT,
+                    brand_name    TEXT,
+                    sku_name      TEXT,
+                    issue_type    TEXT NOT NULL,
+                    severity      TEXT DEFAULT 'medium',
+                    question      TEXT,
+                    label         TEXT,
+                    answer        TEXT,
+                    status        TEXT DEFAULT 'open',
+                    created_at    TEXT NOT NULL,
+                    FOREIGN KEY (batch_id) REFERENCES activity_batches(id),
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS activity_brand_mentions (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    batch_id      INTEGER NOT NULL,
+                    report_id     INTEGER,
+                    brand_name    TEXT,
+                    sku_name      TEXT,
+                    retailer_code TEXT,
+                    retailer_name TEXT,
+                    activity_date TEXT,
+                    source_kind   TEXT,
+                    source_value  TEXT,
+                    created_at    TEXT NOT NULL,
+                    FOREIGN KEY (batch_id) REFERENCES activity_batches(id),
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_actions (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent_type       TEXT NOT NULL,
+                    subject_type     TEXT NOT NULL,
+                    subject_key      TEXT NOT NULL,
+                    report_id        INTEGER,
+                    priority         TEXT DEFAULT 'medium',
+                    title            TEXT NOT NULL,
+                    reason           TEXT,
+                    proposed_payload TEXT DEFAULT '{}',
+                    action_signature TEXT,
+                    status           TEXT DEFAULT 'pending',
+                    approved_by      TEXT,
+                    approved_at      TEXT,
+                    applied_at       TEXT,
+                    created_at       TEXT NOT NULL,
+                    updated_at       TEXT NOT NULL,
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_memories (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    scope_type    TEXT NOT NULL,
+                    scope_key     TEXT NOT NULL,
+                    memory_kind   TEXT DEFAULT 'note',
+                    memory_text   TEXT NOT NULL,
+                    confidence    REAL DEFAULT 0.5,
+                    source        TEXT,
+                    created_at    TEXT NOT NULL,
+                    updated_at    TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS agent_feedback (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    action_id      INTEGER NOT NULL,
+                    feedback_type  TEXT NOT NULL,
+                    original_status TEXT,
+                    actor          TEXT,
+                    note           TEXT,
+                    created_at     TEXT NOT NULL,
+                    FOREIGN KEY (action_id) REFERENCES agent_actions(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS recommendation_outcomes (
+                    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                    brand_name         TEXT NOT NULL,
+                    report_id          INTEGER,
+                    recommendation_key TEXT NOT NULL,
+                    outcome_type       TEXT NOT NULL,
+                    outcome_value      REAL,
+                    note               TEXT,
+                    created_at         TEXT NOT NULL,
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_forecast_brand ON brand_forecast_history(brand_name);
                 CREATE INDEX IF NOT EXISTS idx_churn_report ON store_churn(report_id, brand_name);
+                CREATE INDEX IF NOT EXISTS idx_activity_batch_created ON activity_batches(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_activity_events_batch ON activity_events(batch_id, activity_date);
+                CREATE INDEX IF NOT EXISTS idx_activity_events_report ON activity_events(report_id, activity_date);
+                CREATE INDEX IF NOT EXISTS idx_activity_visits_batch ON activity_visits(batch_id, activity_date);
+                CREATE INDEX IF NOT EXISTS idx_activity_issues_brand ON activity_issues(brand_name, issue_type, activity_date);
+                CREATE INDEX IF NOT EXISTS idx_activity_store_code ON activity_events(retailer_code, activity_date);
+                CREATE INDEX IF NOT EXISTS idx_agent_actions_status ON agent_actions(status, priority, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_agent_subject ON agent_actions(subject_type, subject_key);
+                CREATE INDEX IF NOT EXISTS idx_agent_memories_scope ON agent_memories(scope_type, scope_key, updated_at DESC);
             """)
             # ── Schema migration: add report_type to existing databases ──────
             existing = [r[1] for r in conn.execute("PRAGMA table_info(reports)").fetchall()]
@@ -431,6 +597,13 @@ class DataStore:
                 conn.execute("ALTER TABLE catalog_review_queue ADD COLUMN suggested_match_name TEXT")
             if 'similarity_score' not in queue_cols:
                 conn.execute("ALTER TABLE catalog_review_queue ADD COLUMN similarity_score REAL DEFAULT 0")
+            try:
+                conn.execute(
+                    """CREATE VIRTUAL TABLE IF NOT EXISTS agent_memories_fts
+                       USING fts5(scope_type, scope_key, memory_text, content='')"""
+                )
+            except sqlite3.OperationalError:
+                pass
 
     # ── Report type helpers ───────────────────────────────────────────────────
 
@@ -848,19 +1021,21 @@ class DataStore:
             merged[field] = json.dumps(records)
         return merged
 
-    def get_brand_history(self, brand_name, limit=12):
-        """Return canonical brand KPIs across all reports, newest first."""
+    def get_brand_history(self, brand_name, limit=12, report_type=None):
+        """Return canonical brand KPIs across reports, newest first."""
         brand_names = self._get_brand_family_names(brand_name)
         placeholders = ','.join('?' for _ in brand_names)
         with self._connect() as conn:
-            rows = conn.execute(
-                f"""SELECT bk.*, r.month_label, r.start_date, r.end_date
-                    FROM brand_kpis bk
-                    JOIN reports r ON bk.report_id = r.id
-                    WHERE bk.brand_name IN ({placeholders})
-                    ORDER BY r.start_date DESC""",
-                brand_names
-            ).fetchall()
+            params = list(brand_names)
+            query = f"""SELECT bk.*, r.month_label, r.start_date, r.end_date, r.report_type
+                        FROM brand_kpis bk
+                        JOIN reports r ON bk.report_id = r.id
+                        WHERE bk.brand_name IN ({placeholders})"""
+            if report_type:
+                query += " AND r.report_type=?"
+                params.append(report_type)
+            query += " ORDER BY r.start_date DESC"
+            rows = conn.execute(query, params).fetchall()
         merged = self._merge_brand_kpi_rows([dict(r) for r in rows], order_desc=True)
         return merged[:limit]
 
@@ -920,13 +1095,38 @@ class DataStore:
             brands = {self.analytics_brand_name(r['brand_name']) for r in rows if r['brand_name']}
             return sorted(brands)
 
-    def get_report_by_month(self, year: int, month: int):
+    def get_report_by_month(self, year: int, month: int, report_type: str = None):
         """Return report row whose start_date falls in the given year+month, or None."""
         prefix = f"{year:04d}-{month:02d}"
         with self._connect() as conn:
+            if report_type:
+                row = conn.execute(
+                    """SELECT * FROM reports
+                       WHERE start_date LIKE ? AND report_type=?
+                       ORDER BY start_date DESC LIMIT 1""",
+                    (prefix + '%', report_type)
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM reports WHERE start_date LIKE ? ORDER BY start_date DESC LIMIT 1",
+                    (prefix + '%',)
+                ).fetchone()
+            return dict(row) if row else None
+
+    def find_report_covering_range(self, start_date: str, end_date: str):
+        """Return the nearest report overlapping the given activity date range, or None."""
+        with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM reports WHERE start_date LIKE ? ORDER BY start_date DESC LIMIT 1",
-                (prefix + '%',)
+                """SELECT *,
+                          CASE
+                            WHEN start_date <= ? AND end_date >= ? THEN 0
+                            ELSE 1
+                          END AS exact_cover
+                   FROM reports
+                   WHERE start_date <= ? AND end_date >= ?
+                   ORDER BY exact_cover ASC, start_date DESC
+                   LIMIT 1""",
+                (start_date, end_date, end_date, start_date)
             ).fetchone()
             return dict(row) if row else None
 
@@ -943,7 +1143,7 @@ class DataStore:
             from datetime import date as _date
             d = _date.fromisoformat(report['start_date'])
             prev_year = d.year - 1
-            prev_report = self.get_report_by_month(prev_year, d.month)
+            prev_report = self.get_report_by_month(prev_year, d.month, report.get('report_type'))
         except Exception:
             return {}
         if not prev_report:
@@ -966,7 +1166,7 @@ class DataStore:
         try:
             from datetime import date as _date
             d = _date.fromisoformat(report['start_date'])
-            prev_report = self.get_report_by_month(d.year - 1, d.month)
+            prev_report = self.get_report_by_month(d.year - 1, d.month, report.get('report_type'))
         except Exception:
             return None, 0, 0, 0
         if not prev_report:
@@ -1859,6 +2059,561 @@ class DataStore:
             return [dict(r) for r in conn.execute(
                 "SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?", (limit,)
             ).fetchall()]
+
+    # ── Activity intelligence operations ─────────────────────────────────────
+
+    def save_activity_import(self, payload: dict, source_filename: str, source_type: str = None,
+                             report_id: int = None):
+        """Persist a normalized activity import payload."""
+        now = datetime.now().isoformat(timespec='seconds')
+        summary = payload.get('summary') or {}
+        start_date = summary.get('start_date')
+        end_date = summary.get('end_date')
+        row_count = int(summary.get('row_count') or len(payload.get('events', [])))
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                """INSERT INTO activity_batches
+                   (source_filename, source_type, report_id, start_date, end_date,
+                    row_count, import_status, summary_json, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    source_filename,
+                    source_type,
+                    report_id,
+                    start_date,
+                    end_date,
+                    row_count,
+                    'imported',
+                    json.dumps(summary),
+                    now,
+                    now,
+                )
+            )
+            batch_id = cur.lastrowid
+
+            event_rows = []
+            for row in payload.get('events', []):
+                event_rows.append((
+                    batch_id,
+                    report_id,
+                    row.get('activity_date'),
+                    row.get('salesman_name'),
+                    row.get('salesman_code'),
+                    row.get('salesman_designation'),
+                    row.get('reporting_person_name'),
+                    row.get('survey_code'),
+                    row.get('survey_name'),
+                    row.get('survey_start_date'),
+                    row.get('survey_end_date'),
+                    row.get('retailer_code'),
+                    row.get('retailer_name'),
+                    row.get('retailer_type'),
+                    row.get('retailer_state'),
+                    row.get('retailer_district'),
+                    row.get('retailer_city'),
+                    row.get('question'),
+                    row.get('answer_type'),
+                    row.get('label'),
+                    row.get('answer'),
+                    now,
+                ))
+            if event_rows:
+                conn.executemany(
+                    """INSERT INTO activity_events
+                       (batch_id, report_id, activity_date, salesman_name, salesman_code,
+                        salesman_designation, reporting_person_name, survey_code, survey_name,
+                        survey_start_date, survey_end_date, retailer_code, retailer_name,
+                        retailer_type, retailer_state, retailer_district, retailer_city,
+                        question, answer_type, label, answer, created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    event_rows
+                )
+
+            visit_rows = []
+            for row in payload.get('visits', []):
+                visit_rows.append((
+                    batch_id,
+                    report_id,
+                    row.get('visit_key'),
+                    row.get('activity_date'),
+                    row.get('salesman_name'),
+                    row.get('survey_name'),
+                    row.get('retailer_code'),
+                    row.get('retailer_name'),
+                    row.get('retailer_state'),
+                    row.get('retailer_city'),
+                    int(row.get('event_count') or 0),
+                    int(row.get('issue_count') or 0),
+                    int(row.get('opportunity_count') or 0),
+                    int(row.get('photo_count') or 0),
+                    now,
+                ))
+            if visit_rows:
+                conn.executemany(
+                    """INSERT INTO activity_visits
+                       (batch_id, report_id, visit_key, activity_date, salesman_name, survey_name,
+                        retailer_code, retailer_name, retailer_state, retailer_city,
+                        event_count, issue_count, opportunity_count, photo_count, created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    visit_rows
+                )
+
+            issue_rows = []
+            for row in payload.get('issues', []):
+                issue_rows.append((
+                    batch_id,
+                    report_id,
+                    row.get('activity_date'),
+                    row.get('retailer_code'),
+                    row.get('retailer_name'),
+                    row.get('salesman_name'),
+                    row.get('brand_name'),
+                    row.get('sku_name'),
+                    row.get('issue_type'),
+                    row.get('severity') or 'medium',
+                    row.get('question'),
+                    row.get('label'),
+                    row.get('answer'),
+                    row.get('status') or 'open',
+                    now,
+                ))
+            if issue_rows:
+                conn.executemany(
+                    """INSERT INTO activity_issues
+                       (batch_id, report_id, activity_date, retailer_code, retailer_name,
+                        salesman_name, brand_name, sku_name, issue_type, severity,
+                        question, label, answer, status, created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    issue_rows
+                )
+
+            mention_rows = []
+            for row in payload.get('brand_mentions', []):
+                mention_rows.append((
+                    batch_id,
+                    report_id,
+                    row.get('brand_name'),
+                    row.get('sku_name'),
+                    row.get('retailer_code'),
+                    row.get('retailer_name'),
+                    row.get('activity_date'),
+                    row.get('source_kind'),
+                    row.get('source_value'),
+                    now,
+                ))
+            if mention_rows:
+                conn.executemany(
+                    """INSERT INTO activity_brand_mentions
+                       (batch_id, report_id, brand_name, sku_name, retailer_code, retailer_name,
+                        activity_date, source_kind, source_value, created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    mention_rows
+                )
+
+        self.log_activity(
+            'activity_import',
+            f'{source_filename} ({row_count:,} rows)',
+            report_id=report_id,
+        )
+        return batch_id
+
+    def get_activity_batches(self, limit=50):
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM activity_batches ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_latest_activity_batch(self):
+        rows = self.get_activity_batches(limit=1)
+        return rows[0] if rows else None
+
+    def get_activity_summary(self, batch_id=None, report_id=None, brand_name=None):
+        filters = []
+        params = []
+        if batch_id:
+            filters.append("ae.batch_id=?")
+            params.append(batch_id)
+        if report_id:
+            filters.append("ae.report_id=?")
+            params.append(report_id)
+
+        issue_filters = [f.replace('ae.', 'ai.') for f in filters]
+        issue_params = list(params)
+        visit_filters = [f.replace('ae.', 'av.') for f in filters]
+        visit_params = list(params)
+        mention_filters = [f.replace('ae.', 'abm.') for f in filters]
+        mention_params = list(params)
+
+        if brand_name:
+            issue_filters.append("LOWER(COALESCE(ai.brand_name,''))=LOWER(?)")
+            issue_params.append(brand_name)
+            mention_filters.append("LOWER(COALESCE(abm.brand_name,''))=LOWER(?)")
+            mention_params.append(brand_name)
+
+        where_events = (' WHERE ' + ' AND '.join(filters)) if filters else ''
+        where_issues = (' WHERE ' + ' AND '.join(issue_filters)) if issue_filters else ''
+        where_visits = (' WHERE ' + ' AND '.join(visit_filters)) if visit_filters else ''
+        where_mentions = (' WHERE ' + ' AND '.join(mention_filters)) if mention_filters else ''
+
+        with self._connect() as conn:
+            totals = conn.execute(
+                f"""SELECT COUNT(*) AS events,
+                           COUNT(DISTINCT retailer_code) AS stores,
+                           COUNT(DISTINCT salesman_name) AS salespeople,
+                           COUNT(DISTINCT activity_date) AS active_days
+                    FROM activity_events ae
+                    {where_events}""",
+                params
+            ).fetchone()
+            visits = conn.execute(
+                f"""SELECT COUNT(*) AS visits,
+                           SUM(issue_count) AS issues,
+                           SUM(opportunity_count) AS opportunities,
+                           SUM(photo_count) AS photos
+                    FROM activity_visits av
+                    {where_visits}""",
+                visit_params
+            ).fetchone()
+            top_issues = conn.execute(
+                f"""SELECT issue_type, COUNT(*) AS count
+                    FROM activity_issues ai
+                    {where_issues}
+                    GROUP BY issue_type
+                    ORDER BY count DESC, issue_type
+                    LIMIT 8""",
+                issue_params
+            ).fetchall()
+            top_brands = conn.execute(
+                f"""SELECT COALESCE(brand_name, 'Unmatched') AS brand_name, COUNT(*) AS count
+                    FROM activity_brand_mentions abm
+                    {where_mentions}
+                    GROUP BY COALESCE(brand_name, 'Unmatched')
+                    ORDER BY count DESC, brand_name
+                    LIMIT 12""",
+                mention_params
+            ).fetchall()
+            top_salespeople = conn.execute(
+                f"""SELECT salesman_name,
+                           COUNT(*) AS visits,
+                           SUM(issue_count) AS issues,
+                           SUM(opportunity_count) AS opportunities
+                    FROM activity_visits av
+                    {where_visits}
+                    GROUP BY salesman_name
+                    ORDER BY visits DESC, salesman_name
+                    LIMIT 12""",
+                visit_params
+            ).fetchall()
+            recent_issues = conn.execute(
+                f"""SELECT * FROM activity_issues ai
+                    {where_issues}
+                    ORDER BY activity_date DESC, id DESC
+                    LIMIT 20""",
+                issue_params
+            ).fetchall()
+            recent_visits = conn.execute(
+                f"""SELECT * FROM activity_visits av
+                    {where_visits}
+                    ORDER BY activity_date DESC, id DESC
+                    LIMIT 20""",
+                visit_params
+            ).fetchall()
+
+        return {
+            'totals': {
+                'events': int(totals['events'] or 0),
+                'stores': int(totals['stores'] or 0),
+                'salespeople': int(totals['salespeople'] or 0),
+                'active_days': int(totals['active_days'] or 0),
+                'visits': int(visits['visits'] or 0),
+                'issues': int(visits['issues'] or 0),
+                'opportunities': int(visits['opportunities'] or 0),
+                'photos': int(visits['photos'] or 0),
+            },
+            'top_issues': [dict(r) for r in top_issues],
+            'top_brands': [dict(r) for r in top_brands],
+            'top_salespeople': [dict(r) for r in top_salespeople],
+            'recent_issues': [dict(r) for r in recent_issues],
+            'recent_visits': [dict(r) for r in recent_visits],
+        }
+
+    def get_activity_brand_summary(self, brand_name, limit=12):
+        with self._connect() as conn:
+            totals = conn.execute(
+                """SELECT COUNT(*) AS mentions,
+                          COUNT(DISTINCT retailer_code) AS stores,
+                          COUNT(DISTINCT activity_date) AS active_days
+                   FROM activity_brand_mentions
+                   WHERE LOWER(COALESCE(brand_name, ''))=LOWER(?)""",
+                (brand_name,)
+            ).fetchone()
+            issue_counts = conn.execute(
+                """SELECT issue_type, COUNT(*) AS count
+                   FROM activity_issues
+                   WHERE LOWER(COALESCE(brand_name, ''))=LOWER(?)
+                   GROUP BY issue_type
+                   ORDER BY count DESC, issue_type
+                   LIMIT ?""",
+                (brand_name, limit)
+            ).fetchall()
+            store_rows = conn.execute(
+                """SELECT retailer_code, retailer_name, COUNT(*) AS mentions
+                   FROM activity_brand_mentions
+                   WHERE LOWER(COALESCE(brand_name, ''))=LOWER(?)
+                   GROUP BY retailer_code, retailer_name
+                   ORDER BY mentions DESC, retailer_name
+                   LIMIT ?""",
+                (brand_name, limit)
+            ).fetchall()
+            recent_issues = conn.execute(
+                """SELECT * FROM activity_issues
+                   WHERE LOWER(COALESCE(brand_name, ''))=LOWER(?)
+                   ORDER BY activity_date DESC, id DESC
+                   LIMIT ?""",
+                (brand_name, limit)
+            ).fetchall()
+            latest_visit = conn.execute(
+                """SELECT abm.activity_date, abm.retailer_name, ae.salesman_name
+                   FROM activity_brand_mentions abm
+                   LEFT JOIN activity_events ae
+                     ON ae.retailer_code = abm.retailer_code
+                    AND ae.activity_date = abm.activity_date
+                   WHERE LOWER(COALESCE(abm.brand_name, ''))=LOWER(?)
+                   ORDER BY abm.activity_date DESC, abm.id DESC
+                   LIMIT 1""",
+                (brand_name,)
+            ).fetchone()
+        return {
+            'brand_name': brand_name,
+            'mentions': int(totals['mentions'] or 0),
+            'stores': int(totals['stores'] or 0),
+            'active_days': int(totals['active_days'] or 0),
+            'issue_counts': [dict(r) for r in issue_counts],
+            'stores_seen': [dict(r) for r in store_rows],
+            'recent_issues': [dict(r) for r in recent_issues],
+            'latest_visit': dict(latest_visit) if latest_visit else None,
+        }
+
+    def get_store_activity_summary(self, retailer_code):
+        with self._connect() as conn:
+            totals = conn.execute(
+                """SELECT retailer_name, retailer_state, retailer_city,
+                          COUNT(*) AS events,
+                          COUNT(DISTINCT activity_date) AS active_days,
+                          COUNT(DISTINCT salesman_name) AS salespeople
+                   FROM activity_events
+                   WHERE retailer_code=?
+                   GROUP BY retailer_name, retailer_state, retailer_city
+                   ORDER BY activity_date DESC
+                   LIMIT 1""",
+                (retailer_code,)
+            ).fetchone()
+            visits = conn.execute(
+                """SELECT * FROM activity_visits
+                   WHERE retailer_code=?
+                   ORDER BY activity_date DESC, id DESC
+                   LIMIT 20""",
+                (retailer_code,)
+            ).fetchall()
+            issues = conn.execute(
+                """SELECT * FROM activity_issues
+                   WHERE retailer_code=?
+                   ORDER BY activity_date DESC, id DESC
+                   LIMIT 20""",
+                (retailer_code,)
+            ).fetchall()
+            brands = conn.execute(
+                """SELECT COALESCE(brand_name, 'Unmatched') AS brand_name, COUNT(*) AS mentions
+                   FROM activity_brand_mentions
+                   WHERE retailer_code=?
+                   GROUP BY COALESCE(brand_name, 'Unmatched')
+                   ORDER BY mentions DESC, brand_name
+                   LIMIT 20""",
+                (retailer_code,)
+            ).fetchall()
+        return {
+            'store': dict(totals) if totals else None,
+            'visits': [dict(r) for r in visits],
+            'issues': [dict(r) for r in issues],
+            'brands': [dict(r) for r in brands],
+        }
+
+    # ── Agent action + memory operations ────────────────────────────────────
+
+    def _sync_agent_memory_fts(self, conn, memory_id, scope_type, scope_key, memory_text):
+        try:
+            conn.execute("DELETE FROM agent_memories_fts WHERE rowid=?", (memory_id,))
+            conn.execute(
+                "INSERT INTO agent_memories_fts(rowid, scope_type, scope_key, memory_text) VALUES (?,?,?,?)",
+                (memory_id, scope_type, scope_key, memory_text)
+            )
+        except sqlite3.OperationalError:
+            pass
+
+    def create_agent_action(self, agent_type, subject_type, subject_key, title,
+                            reason=None, proposed_payload=None, report_id=None,
+                            priority='medium', action_signature=None):
+        now = datetime.now().isoformat(timespec='seconds')
+        payload_json = json.dumps(proposed_payload or {})
+        with self._connect() as conn:
+            if action_signature:
+                existing = conn.execute(
+                    """SELECT * FROM agent_actions
+                       WHERE action_signature=? AND status IN ('pending', 'approved')
+                       ORDER BY created_at DESC LIMIT 1""",
+                    (action_signature,)
+                ).fetchone()
+                if existing:
+                    return dict(existing)
+            cur = conn.execute(
+                """INSERT INTO agent_actions
+                   (agent_type, subject_type, subject_key, report_id, priority,
+                    title, reason, proposed_payload, action_signature,
+                    status, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    agent_type,
+                    subject_type,
+                    subject_key,
+                    report_id,
+                    priority,
+                    title,
+                    reason,
+                    payload_json,
+                    action_signature,
+                    'pending',
+                    now,
+                    now,
+                )
+            )
+            return self.get_agent_action(cur.lastrowid)
+
+    def get_agent_action(self, action_id):
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_actions WHERE id=?",
+                (action_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_agent_actions(self, status='pending', limit=100):
+        with self._connect() as conn:
+            if status == 'all':
+                rows = conn.execute(
+                    "SELECT * FROM agent_actions ORDER BY created_at DESC LIMIT ?",
+                    (limit,)
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT * FROM agent_actions
+                       WHERE status=?
+                       ORDER BY
+                         CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1
+                                       WHEN 'medium' THEN 2 ELSE 3 END,
+                         created_at DESC
+                       LIMIT ?""",
+                    (status, limit)
+                ).fetchall()
+        items = [dict(r) for r in rows]
+        for item in items:
+            try:
+                item['proposed_payload'] = json.loads(item.get('proposed_payload') or '{}')
+            except Exception:
+                item['proposed_payload'] = {}
+        return items
+
+    def save_agent_memory(self, scope_type, scope_key, memory_text,
+                          memory_kind='note', confidence=0.5, source=None):
+        now = datetime.now().isoformat(timespec='seconds')
+        with self._connect() as conn:
+            cur = conn.execute(
+                """INSERT INTO agent_memories
+                   (scope_type, scope_key, memory_kind, memory_text, confidence, source, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (scope_type, scope_key, memory_kind, memory_text, confidence, source, now, now)
+            )
+            memory_id = cur.lastrowid
+            self._sync_agent_memory_fts(conn, memory_id, scope_type, scope_key, memory_text)
+            return memory_id
+
+    def search_agent_memories(self, query, limit=8):
+        q = str(query or '').strip()
+        if not q:
+            return []
+        with self._connect() as conn:
+            try:
+                rows = conn.execute(
+                    """SELECT am.*
+                       FROM agent_memories_fts f
+                       JOIN agent_memories am ON am.id = f.rowid
+                       WHERE agent_memories_fts MATCH ?
+                       ORDER BY rank
+                       LIMIT ?""",
+                    (q, limit)
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = conn.execute(
+                    """SELECT *
+                       FROM agent_memories
+                       WHERE memory_text LIKE ?
+                       ORDER BY updated_at DESC
+                       LIMIT ?""",
+                    (f'%{q}%', limit)
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    def record_agent_feedback(self, action_id, feedback_type, actor=None, note=None):
+        now = datetime.now().isoformat(timespec='seconds')
+        action = self.get_agent_action(action_id)
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO agent_feedback
+                   (action_id, feedback_type, original_status, actor, note, created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (action_id, feedback_type, action.get('status') if action else None, actor, note, now)
+            )
+
+    def update_agent_action_status(self, action_id, status, actor='admin', note=None):
+        now = datetime.now().isoformat(timespec='seconds')
+        action = self.get_agent_action(action_id)
+        if not action:
+            return None
+        approved_at = now if status == 'approved' else action.get('approved_at')
+        applied_at = now if status == 'applied' else action.get('applied_at')
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE agent_actions
+                   SET status=?, approved_by=?, approved_at=?, applied_at=?, updated_at=?
+                   WHERE id=?""",
+                (status, actor, approved_at, applied_at, now, action_id)
+            )
+        self.record_agent_feedback(action_id, status, actor=actor, note=note)
+        memory_text = f"{action['title']} -> {status}"
+        if note:
+            memory_text += f" ({note})"
+        self.save_agent_memory(
+            scope_type=action['subject_type'],
+            scope_key=action['subject_key'],
+            memory_text=memory_text,
+            memory_kind='action_feedback',
+            confidence=0.7 if status == 'approved' else 0.55,
+            source='agent_feedback',
+        )
+        return self.get_agent_action(action_id)
+
+    def save_recommendation_outcome(self, brand_name, recommendation_key, outcome_type,
+                                    outcome_value=None, note=None, report_id=None):
+        now = datetime.now().isoformat(timespec='seconds')
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO recommendation_outcomes
+                   (brand_name, report_id, recommendation_key, outcome_type, outcome_value, note, created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (brand_name, report_id, recommendation_key, outcome_type, outcome_value, note, now)
+            )
 
     # ── SKU analytics queries ─────────────────────────────────────────────────
 
