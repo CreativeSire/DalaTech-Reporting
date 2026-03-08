@@ -346,6 +346,173 @@
       line-height: 1.48;
     }
 
+    /* ─── PERFORMANCE SCORECARD (page 2) ─────────────────────────────────── */
+    .scorecard-band {
+      margin: 0 14px 10px;
+      background: #F7F8FB;
+      border: 1px solid #DDE2EE;
+      border-radius: 6px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      flex-shrink: 0;
+    }
+
+    .sc-grade-block {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .sc-grade-letter {
+      font-size: 36pt;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .sc-grade-label {
+      font-size: 5.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-top: 2px;
+    }
+
+    .sc-divider {
+      width: 1px;
+      align-self: stretch;
+      background: #DDE2EE;
+      flex-shrink: 0;
+    }
+
+    .sc-metrics {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px 20px;
+    }
+
+    .sc-metric-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sc-metric-label {
+      font-size: 5.5pt;
+      color: #666;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      width: 50px;
+      flex-shrink: 0;
+    }
+
+    .sc-bar-track {
+      flex: 1;
+      height: 5px;
+      background: #E2E6F0;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .sc-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+    }
+
+    .sc-metric-score {
+      font-size: 6pt;
+      font-weight: 700;
+      color: #444;
+      width: 22px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .sc-total-block {
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .sc-total-num {
+      font-size: 22pt;
+      font-weight: 900;
+      color: #1B2B5E;
+      line-height: 1;
+    }
+
+    .sc-total-label {
+      font-size: 4.5pt;
+      color: #AAA;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-top: 1px;
+    }
+
+    /* ─── DATA TABLES (page 2) ────────────────────────────────────────────── */
+    .tables-section {
+      margin: 0 14px 8px;
+      display: flex;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .data-table-card {
+      flex: 1;
+      background: #fff;
+      border: 1px solid #E2E5EE;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    .data-table-card.narrow { flex: 0 0 auto; width: 130px; }
+
+    .dtc-header {
+      background: #1B2B5E;
+      color: #fff;
+      font-size: 5.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      padding: 5px 8px;
+    }
+
+    .dtc-header.red-hdr { background: #E8192C; }
+
+    .dtc-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 6.5pt;
+    }
+
+    .dtc-table th {
+      background: #F4F6FA;
+      color: #555;
+      font-weight: 700;
+      text-transform: uppercase;
+      font-size: 5pt;
+      letter-spacing: 0.4px;
+      padding: 3px 6px;
+      border-bottom: 1px solid #E8EBF2;
+      text-align: left;
+    }
+
+    .dtc-table td {
+      padding: 3px 6px;
+      border-bottom: 1px solid #F0F2F7;
+      color: #333;
+      line-height: 1.4;
+    }
+
+    .dtc-table tr:last-child td { border-bottom: none; }
+
+    .dtc-table td.num { text-align: right; font-weight: 600; color: #1B2B5E; }
+    .dtc-table td.val { text-align: right; color: #555; }
+
     /* ─── PAGE FOOTER ─────────────────────────────────────────────────────── */
     .page-footer { flex-shrink: 0; }
 
@@ -574,13 +741,140 @@
   <!-- ── Tagline ─────────────────────────────────────────────────────────── -->
   <div class="tagline-bar">BOOSTING REVENUE AND ENHANCING BRAND VALUE</div>
 
+  <!-- ── Performance Scorecard ───────────────────────────────────────────── -->
+  <div class="scorecard-band">
+
+    <!-- Grade letter -->
+    <div class="sc-grade-block">
+      <div class="sc-grade-letter" style="color:{{ perf.grade_color }};">{{ perf.grade }}</div>
+      <div class="sc-grade-label" style="color:{{ perf.grade_color }};">{{ perf.grade_label }}</div>
+    </div>
+
+    <div class="sc-divider"></div>
+
+    <!-- Sub-score bars -->
+    <div class="sc-metrics">
+      <div class="sc-metric-row">
+        <div class="sc-metric-label">Revenue</div>
+        <div class="sc-bar-track">
+          <div class="sc-bar-fill" style="width:{{ (perf.revenue_score / 25 * 100)|round(0) }}%;background:{{ perf.grade_color }};"></div>
+        </div>
+        <div class="sc-metric-score">{{ perf.revenue_score }}/25</div>
+      </div>
+      <div class="sc-metric-row">
+        <div class="sc-metric-label">Loyalty</div>
+        <div class="sc-bar-track">
+          <div class="sc-bar-fill" style="width:{{ (perf.loyalty_score / 25 * 100)|round(0) }}%;background:#1B2B5E;"></div>
+        </div>
+        <div class="sc-metric-score">{{ perf.loyalty_score }}/25</div>
+      </div>
+      <div class="sc-metric-row">
+        <div class="sc-metric-label">Reach</div>
+        <div class="sc-bar-track">
+          <div class="sc-bar-fill" style="width:{{ (perf.reach_score / 25 * 100)|round(0) }}%;background:#1A7A4A;"></div>
+        </div>
+        <div class="sc-metric-score">{{ perf.reach_score }}/25</div>
+      </div>
+      <div class="sc-metric-row">
+        <div class="sc-metric-label">Activity</div>
+        <div class="sc-bar-track">
+          <div class="sc-bar-fill" style="width:{{ (perf.activity_score / 25 * 100)|round(0) }}%;background:#C0922A;"></div>
+        </div>
+        <div class="sc-metric-score">{{ perf.activity_score }}/25</div>
+      </div>
+    </div>
+
+    <div class="sc-divider"></div>
+
+    <!-- Total score + portfolio share -->
+    <div class="sc-total-block">
+      <div class="sc-total-num">{{ perf.total }}</div>
+      <div class="sc-total-label">/ 100 Score</div>
+      {% if portfolio_share %}
+      <div style="margin-top:6px;font-size:5pt;color:#888;">Portfolio Share</div>
+      <div style="font-size:11pt;font-weight:800;color:#1B2B5E;line-height:1;">{{ portfolio_share }}%</div>
+      {% endif %}
+    </div>
+
+  </div>
+
   <!-- ── Recommendations ─────────────────────────────────────────────────── -->
-  <div class="content-area" style="padding-top:20px;">
+  <div class="content-area" style="padding-top:10px;flex:0 0 auto;overflow:visible;">
     <div class="narrative-section">
       <h3>{{ narrative_sections.next_month_label }}</h3>
       <ul>{% for b in narrative_sections.recommendations %}<li>{{ b }}</li>{% endfor %}</ul>
     </div>
   </div>
+
+  <!-- ── Inventory + Stock Movement Tables ───────────────────────────────── -->
+  <div class="tables-section">
+
+    <!-- Closing Stock -->
+    {% if closing_stock_table %}
+    <div class="data-table-card">
+      <div class="dtc-header">Closing Stock Inventory</div>
+      <table class="dtc-table">
+        <thead>
+          <tr><th>SKU</th><th style="text-align:right;">Packs</th></tr>
+        </thead>
+        <tbody>
+          {% for row in closing_stock_table %}
+          <tr>
+            <td>{{ row.sku }}</td>
+            <td class="num">{{ row.qty }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    <!-- Pickup by DALA -->
+    {% if pickup_table %}
+    <div class="data-table-card">
+      <div class="dtc-header red-hdr">Inventory Pickup by DALA</div>
+      <table class="dtc-table">
+        <thead>
+          <tr><th>SKU</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Value</th></tr>
+        </thead>
+        <tbody>
+          {% for row in pickup_table %}
+          <tr>
+            <td>{{ row.sku }}</td>
+            <td class="num">{{ row.qty }}</td>
+            <td class="val">{{ row.value }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    <!-- Supplied by Brand -->
+    {% if supply_table %}
+    <div class="data-table-card">
+      <div class="dtc-header">Supplied by Brand</div>
+      <table class="dtc-table">
+        <thead>
+          <tr><th>SKU</th><th style="text-align:right;">Qty</th><th style="text-align:right;">Value</th></tr>
+        </thead>
+        <tbody>
+          {% for row in supply_table %}
+          <tr>
+            <td>{{ row.sku }}</td>
+            <td class="num">{{ row.qty }}</td>
+            <td class="val">{{ row.value }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+  </div>
+
+  <!-- ── Spacer to push footer down ──────────────────────────────────────── -->
+  <div style="flex:1;"></div>
 
   <!-- ── Footer ──────────────────────────────────────────────────────────── -->
   <div class="page-footer">
