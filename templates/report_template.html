@@ -264,14 +264,14 @@
     /* Chart images: give them real height so they're readable */
     .snap-chart img {
       width: 100%;
-      height: 112px;
+      height: 124px;
       object-fit: contain;
       display: block;
     }
 
     /* ── Stock Chart (narrower sidebar) ───────────────────────────────────── */
     .snap-stock {
-      width: 108px;
+      width: 116px;
       flex-shrink: 0;
       background: #fff;
       border-radius: 5px;
@@ -285,7 +285,7 @@
 
     .snap-stock img {
       width: 100%;
-      height: 98px;
+      height: 108px;
       object-fit: contain;
       display: block;
     }
@@ -841,11 +841,11 @@
 
     <!-- Row 2: Top Stores | Top Products | Stock Level -->
     <div class="snap-row">
-      <div class="snap-chart" style="flex:2;">
+      <div class="snap-chart" style="flex:2.15;">
         <div class="snap-chart-title">Top Selling Supermarkets by Value of Sales</div>
         <img src="{{ top_stores_chart }}" alt="Top Stores">
       </div>
-      <div class="snap-chart" style="flex:2;">
+      <div class="snap-chart" style="flex:1.85;">
         <div class="snap-chart-title">Top Selling Products by Value</div>
         <img src="{{ top_products_chart }}" alt="Top Products">
       </div>

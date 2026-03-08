@@ -115,6 +115,34 @@ def _compact_store_label(value: str, max_base_chars: int = 12, max_loc_chars: in
     return base_short
 
 
+def _compact_stock_label(value: str) -> str:
+    """Create a short single-line SKU label for vertical print treatment."""
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    text = text.replace('(12x)', '').replace('(6x)', '').strip()
+    parts = [p for p in text.split() if p]
+    if not parts:
+        return ''
+
+    size = parts[0]
+    stop_words = {'yoghurt', 'yogurt', 'drink', 'sweetened', 'unsweetened', 'greek'}
+    descriptors = [p for p in parts[1:] if p.lower() not in stop_words]
+    focus = descriptors[0] if descriptors else (parts[1] if len(parts) > 1 else '')
+    if len(descriptors) >= 2 and focus.lower() in {'high', 'low'}:
+        focus = f'{focus} {descriptors[1]}'
+
+    focus = (
+        focus.replace('Strawberry', 'Strawb.')
+             .replace('Vanilla', 'Vanilla')
+             .replace('Mango', 'Mango')
+             .replace('Low Fat', 'LowFat')
+        .replace('Mixed', 'Mix')
+    )
+    focus = _shorten_label(focus.title(), 7)
+    return f'{focus} {size}'.strip() if focus else size
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CHART FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -147,15 +175,15 @@ def chart_top_stores(top_stores_df, width_in=6.0, height_in=2.5,
     n = len(df)
 
     if _for_print:
-        fig_h = max(0.98, n * 0.37)
+        fig_h = max(1.12, n * 0.42)
         fig_w = 3.4
-        fs_val   = 10.6
-        fs_tick  = 9.4
+        fs_val   = 11.0
+        fs_tick  = 10.2
         fs_xlab  = 8.2
-        bar_h    = 0.54
+        bar_h    = 0.56
         lw_grid  = 0.8
         spine_lw = 0.6
-        shortened = [_compact_store_label(value, 11, 8) for value in df['Store'].tolist()]
+        shortened = [_compact_store_label(value, 12, 8) for value in df['Store'].tolist()]
         if len(df) > 0 and str(df.iloc[-1]['Store']).startswith('Other Stores'):
             shortened[-1] = f'Other Stores ({actual_store_count - 4})'
         df['Store'] = shortened
@@ -285,9 +313,9 @@ def chart_product_value(product_value_df, width_in=3.0, height_in=2.2,
     df = df.reset_index(drop=True)
 
     if _for_print:
-        fig_h = max(1.04, n * 0.36)
+        fig_h = max(1.08, n * 0.38)
         fig_w = 3.4
-        fs_val, fs_tick, fs_xlab = 10.4, 9.8, 8.2
+        fs_val, fs_tick, fs_xlab = 10.8, 10.1, 8.2
         bar_h = 0.54
         df['SKU'] = _unique_short_labels(df['SKU'].tolist(), 16)
     else:
@@ -588,23 +616,23 @@ def chart_stock_vertical(closing_stock_df, width_in=1.8, height_in=3.0,
     if df.empty:
         return ""
 
-    df = df.sort_values('Closing Stock (Cartons)', ascending=False).head(6 if _for_print else 10)
+    df = df.sort_values('Closing Stock (Cartons)', ascending=False).head(4 if _for_print else 10)
 
     if _for_print:
         n = len(df)
-        fig_w = max(1.05, min(1.35, 0.52 + n * 0.16))
-        fig_h = 1.28
-        fs_val   = 10
-        fs_tick  = 6.4
-        fs_ytick = 7.2
-        bar_w    = 0.58
+        fig_w = 1.28
+        fig_h = 1.24
+        fs_val   = 8.8
+        fs_tick  = 5.5
+        fs_ytick = 7.0
+        bar_w    = 0.5
         lw_v     = 0.7
     else:
         fig_w, fig_h = width_in, height_in
         fs_val, fs_tick, fs_ytick = 6.5, 5.5, 6.5
         bar_w, lw_v = 0.65, 1.0
 
-    labels = _unique_short_labels(df['SKU'].tolist(), 8 if _for_print else 12)
+    labels = [_compact_stock_label(v) for v in df['SKU'].tolist()] if _for_print else _unique_short_labels(df['SKU'].tolist(), 12)
     vals   = df['Closing Stock (Cartons)'].values
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
@@ -621,8 +649,15 @@ def chart_stock_vertical(closing_stock_df, width_in=1.8, height_in=3.0,
         )
 
     ax.set_xticks(range(len(vals)))
-    ax.set_xticklabels(labels, rotation=90, fontsize=fs_tick, color=C_TEXT)
-    ax.set_ylim(0, max(vals) * 1.28)
+    ax.set_xticklabels(
+        labels,
+        rotation=90 if _for_print else 90,
+        fontsize=fs_tick,
+        color=C_TEXT,
+        ha='center',
+        va='top',
+    )
+    ax.set_ylim(0, max(vals) * (1.20 if _for_print else 1.28))
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f'{v:.0f}'))
     ax.tick_params(axis='y', labelsize=fs_ytick, colors=C_MUTED, length=2)
     ax.tick_params(axis='x', length=0)
@@ -633,7 +668,11 @@ def chart_stock_vertical(closing_stock_df, width_in=1.8, height_in=3.0,
     ax.spines['bottom'].set_linewidth(lw_v)
     ax.grid(axis='y', alpha=0.3, color=C_GRID)
 
-    plt.tight_layout(pad=0.3 if _for_print else 0.4)
+    if _for_print:
+        ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=3, integer=True))
+        plt.tight_layout(pad=0.20, rect=(0, 0.18, 1, 1))
+    else:
+        plt.tight_layout(pad=0.4)
     return _save_base64(fig, tight_pad=0.04 if _for_print else 0.1)
 
 
