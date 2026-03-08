@@ -70,30 +70,68 @@ def _shorten_label(value, max_chars: int) -> str:
     return f'{clipped}...'
 
 
+def _unique_short_labels(values, max_chars: int) -> list[str]:
+    """Shorten labels while preserving uniqueness for chart categories."""
+    counts = {}
+    labels = []
+    for value in values:
+        base = _shorten_label(value, max_chars)
+        idx = counts.get(base, 0) + 1
+        counts[base] = idx
+        if idx == 1:
+            labels.append(base)
+        else:
+            suffix = f' #{idx}'
+            room = max(4, max_chars - len(suffix))
+            alt = _shorten_label(value, room)
+            labels.append(f'{alt}{suffix}')
+    return labels
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CHART FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def chart_top_stores(top_stores_df, width_in=6.0, height_in=2.5,
-                     _for_print: bool = False) -> str:
+                     _for_print: bool = False,
+                     total_store_count: int | None = None,
+                     total_revenue: float | None = None) -> str:
     """Horizontal bar chart — top stores by revenue. Returns base64 PNG."""
     df = top_stores_df.copy()
     if df.empty:
         return ""
 
-    n = min(len(df), 8 if not _for_print else 5)
-    df = df.head(n).iloc[::-1].reset_index(drop=True)
+    df = df.sort_values('Revenue', ascending=False)
+    if _for_print:
+        actual_store_count = max(int(total_store_count or 0), len(df))
+        if len(df) > 5:
+            head = df.head(5).copy()
+            if total_revenue is not None:
+                tail_revenue = max(0.0, float(total_revenue) - float(head['Revenue'].sum()))
+            else:
+                tail_revenue = float(df.iloc[5:]['Revenue'].sum())
+            if tail_revenue > 0:
+                head.loc[len(head)] = {'Store': f'Other Stores ({actual_store_count - 5})', 'Revenue': tail_revenue}
+            df = head.reset_index(drop=True)
+        else:
+            df = df.head(5).reset_index(drop=True)
+    else:
+        df = df.head(8).reset_index(drop=True)
+    n = len(df)
 
     if _for_print:
-        fig_h = max(0.98, n * 0.34)
+        fig_h = max(1.02, n * 0.33)
         fig_w = 3.4
         fs_val   = 10.6
-        fs_tick  = 10.2
+        fs_tick  = 10.6
         fs_xlab  = 8.2
         bar_h    = 0.58
         lw_grid  = 0.8
         spine_lw = 0.6
-        df['Store'] = df['Store'].map(lambda s: _shorten_label(s, 16))
+        shortened = _unique_short_labels(df['Store'].tolist(), 15)
+        if len(df) > 0 and str(df.iloc[-1]['Store']).startswith('Other Stores'):
+            shortened[-1] = f'Other Stores ({actual_store_count - 5})'
+        df['Store'] = shortened
     else:
         fig_h, fig_w = height_in, width_in
         fs_val, fs_tick, fs_xlab = 8, 9, 9
@@ -101,9 +139,20 @@ def chart_top_stores(top_stores_df, width_in=6.0, height_in=2.5,
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
-    colors = [C_RED if i == n - 1 else C_NAVY for i in range(n)]
-    bars   = ax.barh(df['Store'], df['Revenue'], color=colors, height=bar_h,
+    positions = np.arange(n)
+    colors = []
+    for i, store_name in enumerate(df['Store']):
+        if i == 0:
+            colors.append(C_RED)
+        elif _for_print and str(store_name).startswith('Other Stores'):
+            colors.append('#94A3B8')
+        else:
+            colors.append(C_NAVY)
+    bars   = ax.barh(positions, df['Revenue'], color=colors, height=bar_h,
                      linewidth=0)
+    ax.invert_yaxis()
+    ax.set_yticks(positions)
+    ax.set_yticklabels(df['Store'])
 
     max_val = max(float(df['Revenue'].max()), 1.0)
     label_transform = mtransforms.blended_transform_factory(ax.transAxes, ax.transData)
@@ -134,7 +183,7 @@ def chart_top_stores(top_stores_df, width_in=6.0, height_in=2.5,
                 color='#333',
             )
 
-    ax.set_xlim(0, max_val * 1.28)
+    ax.set_xlim(0, max_val * (1.18 if _for_print else 1.28))
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: _naira(x)))
 
     for sp in ['top', 'right', 'left']:
@@ -201,19 +250,19 @@ def chart_product_qty(product_qty_df, width_in=3.0, height_in=2.2,
 def chart_product_value(product_value_df, width_in=3.0, height_in=2.2,
                         _for_print: bool = False) -> str:
     """Horizontal bar chart — top SKUs by revenue."""
-    df = product_value_df.head(6 if not _for_print else 5).copy()
+    df = product_value_df.sort_values('Revenue', ascending=False).head(6 if not _for_print else 5).copy()
     if df.empty:
         return ""
 
     n = len(df)
-    df = df.iloc[::-1].reset_index(drop=True)
+    df = df.reset_index(drop=True)
 
     if _for_print:
         fig_h = max(0.98, n * 0.34)
         fig_w = 3.4
         fs_val, fs_tick, fs_xlab = 10.6, 10.2, 8.2
         bar_h = 0.58
-        df['SKU'] = df['SKU'].map(lambda s: _shorten_label(s, 17))
+        df['SKU'] = _unique_short_labels(df['SKU'].tolist(), 17)
     else:
         fig_h, fig_w = height_in, width_in
         fs_val, fs_tick, fs_xlab = 8, 8, 8
@@ -221,9 +270,12 @@ def chart_product_value(product_value_df, width_in=3.0, height_in=2.2,
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
-    colors = [C_RED if i == n - 1 else '#C84050' for i in range(n)]
-    colors = [C_RED] * n  # uniform red for product chart
-    bars = ax.barh(df['SKU'], df['Revenue'], color=colors, height=bar_h, linewidth=0)
+    positions = np.arange(n)
+    colors = [C_RED] * n
+    bars = ax.barh(positions, df['Revenue'], color=colors, height=bar_h, linewidth=0)
+    ax.invert_yaxis()
+    ax.set_yticks(positions)
+    ax.set_yticklabels(df['SKU'])
 
     max_val = max(float(df['Revenue'].max()), 1.0)
     label_transform = mtransforms.blended_transform_factory(ax.transAxes, ax.transData)
@@ -509,14 +561,14 @@ def chart_stock_vertical(closing_stock_df, width_in=1.8, height_in=3.0,
     if df.empty:
         return ""
 
-    df = df.sort_values('Closing Stock (Cartons)', ascending=False).head(10)
+    df = df.sort_values('Closing Stock (Cartons)', ascending=False).head(8 if _for_print else 10)
 
     if _for_print:
         n = len(df)
         fig_w = max(1.1, min(1.5, 0.55 + n * 0.18))
         fig_h = 1.35
         fs_val   = 11
-        fs_tick  = 8
+        fs_tick  = 7.2
         fs_ytick = 8
         bar_w    = 0.6
         lw_v     = 0.7
@@ -525,7 +577,7 @@ def chart_stock_vertical(closing_stock_df, width_in=1.8, height_in=3.0,
         fs_val, fs_tick, fs_ytick = 6.5, 5.5, 6.5
         bar_w, lw_v = 0.65, 1.0
 
-    labels = [s[:12] + '…' if len(s) > 12 else s for s in df['SKU']]
+    labels = _unique_short_labels(df['SKU'].tolist(), 10 if _for_print else 12)
     vals   = df['Closing Stock (Cartons)'].values
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))

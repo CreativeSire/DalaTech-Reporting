@@ -61,6 +61,68 @@ def _naira(v):
     return f'₦{v:,.0f}'
 
 
+def _infer_report_type(start_date: str, end_date: str, override: str | None = None) -> str:
+    report_type = (override or '').strip().lower()
+    if report_type in {'weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'}:
+        return report_type
+    try:
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+    except Exception:
+        return 'custom'
+
+    days = (end_dt - start_dt).days + 1
+    is_full_year = start_dt.month == 1 and start_dt.day == 1 and end_dt.month == 12 and end_dt.day == 31
+    is_quarter = (
+        start_dt.day == 1 and
+        start_dt.month in (1, 4, 7, 10) and
+        end_dt.month == start_dt.month + 2 and
+        ((end_dt.month in (3, 12) and end_dt.day == 31) or
+         (end_dt.month == 6 and end_dt.day == 30) or
+         (end_dt.month == 9 and end_dt.day == 30))
+    )
+    next_dt = datetime.fromordinal(end_dt.toordinal() + 1)
+    is_full_month = start_dt.day == 1 and next_dt.day == 1
+
+    if is_full_year or days in (365, 366):
+        return 'yearly'
+    if is_quarter or 85 <= days <= 95:
+        return 'quarterly'
+    if is_full_month or 28 <= days <= 31:
+        return 'monthly'
+    if days <= 7:
+        return 'weekly'
+    if days <= 14:
+        return 'biweekly'
+    return 'custom'
+
+
+def _build_period_labels(start_date: str, end_date: str,
+                         report_type: str | None = None,
+                         month_label: str | None = None) -> tuple[str, str]:
+    report_type = _infer_report_type(start_date, end_date, report_type)
+    start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+    end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+
+    if report_type == 'weekly':
+        label = month_label or f"Week of {start_dt.strftime('%d %b %Y')}"
+        return f'{label} Sales Report', label
+    if report_type == 'biweekly':
+        label = month_label or f"{start_dt.strftime('%d %b')} - {end_dt.strftime('%d %b %Y')}"
+        return f'Biweekly Sales Report', label
+    if report_type == 'quarterly':
+        label = month_label or f"Q{((start_dt.month - 1) // 3) + 1} {start_dt.year}"
+        return f'{label} Quarterly Sales Report', label
+    if report_type == 'yearly':
+        label = month_label or f'{start_dt.year}'
+        return f'{label} Annual Sales Report', label
+    if report_type == 'monthly':
+        label = month_label or start_dt.strftime('%B %Y')
+        return f'{start_dt.strftime("%B")} Monthly Sales Report', label
+    label = month_label or f"{start_dt.strftime('%d %b %Y')} - {end_dt.strftime('%d %b %Y')}"
+    return 'Sales Report', label
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  PLOTLY CHART BUILDERS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -418,6 +480,8 @@ def render_html_report(brand_name: str, kpis: dict,
                        start_date: str, end_date: str,
                        portfolio_avg_revenue: float = None,
                        total_portfolio_revenue: float = None,
+                       report_type: str | None = None,
+                       month_label: str | None = None,
                        ai_narrative: str = None) -> str:
     """Render the standalone interactive HTML report and return the HTML string."""
     # ── Plotly chart divs ─────────────────────────────────────────────────────
@@ -442,6 +506,9 @@ def render_html_report(brand_name: str, kpis: dict,
         if v >= 1_000:     return f'₦{v/1_000:.1f}K'
         return f'₦{v:,.0f}'
 
+    top_stores_sorted = kpis['top_stores'].sort_values('Revenue', ascending=False) if not kpis['top_stores'].empty else kpis['top_stores']
+    top_products_sorted = kpis['product_value'].sort_values('Revenue', ascending=False) if not kpis['product_value'].empty else kpis['product_value']
+
     top_stores_table = [
         {
             'store': r['Store'],
@@ -449,7 +516,7 @@ def render_html_report(brand_name: str, kpis: dict,
             'pct':   round(r['Revenue'] / kpis['total_revenue'] * 100, 1)
                      if kpis['total_revenue'] > 0 else 0,
         }
-        for _, r in kpis['top_stores'].head(5).iterrows()
+        for _, r in top_stores_sorted.head(5).iterrows()
     ]
 
     top_products_table = [
@@ -459,7 +526,7 @@ def render_html_report(brand_name: str, kpis: dict,
             'pct':   round(r['Revenue'] / kpis['total_revenue'] * 100, 1)
                      if kpis['total_revenue'] > 0 else 0,
         }
-        for _, r in kpis['product_value'].head(5).iterrows()
+        for _, r in top_products_sorted.head(5).iterrows()
     ]
 
     closing_stock_table = [
@@ -492,6 +559,7 @@ def render_html_report(brand_name: str, kpis: dict,
     end_dt   = datetime.strptime(end_date,   '%Y-%m-%d')
     display_start = start_dt.strftime('%d %b %Y')
     display_end   = end_dt.strftime('%d %b %Y')
+    report_title, period_badge = _build_period_labels(start_date, end_date, report_type, month_label)
 
     # ── Logo ──────────────────────────────────────────────────────────────────
     logo_data = ''
@@ -505,6 +573,8 @@ def render_html_report(brand_name: str, kpis: dict,
         brand_name=brand_name,
         start_date=display_start,
         end_date=display_end,
+        report_title=report_title,
+        period_badge=period_badge,
         kpis=kpis,
         narrative=narrative,
         logo_path=logo_data,
@@ -530,6 +600,8 @@ def generate_html(output_path: str, brand_name: str, kpis: dict,
                   start_date: str, end_date: str,
                   portfolio_avg_revenue: float = None,
                   total_portfolio_revenue: float = None,
+                  report_type: str | None = None,
+                  month_label: str | None = None,
                   ai_narrative: str = None) -> str:
     """
     Generate a standalone interactive HTML report using Plotly.
@@ -552,6 +624,8 @@ def generate_html(output_path: str, brand_name: str, kpis: dict,
         end_date=end_date,
         portfolio_avg_revenue=portfolio_avg_revenue,
         total_portfolio_revenue=total_portfolio_revenue,
+        report_type=report_type,
+        month_label=month_label,
         ai_narrative=ai_narrative,
     )
 

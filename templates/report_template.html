@@ -539,6 +539,110 @@
       font-weight: 700;
     }
 
+    .store-summary-card {
+      margin: 0 14px 8px;
+      background: #fff;
+      border: 1px solid #E2E5EE;
+      border-radius: 5px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+
+    .store-summary-head {
+      background: #F4F6FA;
+      border-bottom: 1px solid #E8EBF2;
+      padding: 6px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .store-summary-title {
+      font-size: 5.6pt;
+      font-weight: 800;
+      color: #1B2B5E;
+      text-transform: uppercase;
+      letter-spacing: 0.75px;
+    }
+
+    .store-summary-sub {
+      font-size: 4.7pt;
+      color: #7F8AA3;
+      font-weight: 600;
+    }
+
+    .store-summary-metrics {
+      display: flex;
+      gap: 8px;
+      padding: 8px 10px 2px;
+    }
+
+    .store-summary-pill {
+      flex: 1;
+      background: #F8FAFD;
+      border: 1px solid #E8EBF2;
+      border-radius: 5px;
+      padding: 5px 8px;
+    }
+
+    .store-summary-kicker {
+      font-size: 4.8pt;
+      text-transform: uppercase;
+      letter-spacing: 0.55px;
+      color: #7F8AA3;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    .store-summary-value {
+      font-size: 10pt;
+      font-weight: 800;
+      color: #1B2B5E;
+      line-height: 1.1;
+    }
+
+    .store-summary-value.red { color: #E8192C; }
+    .store-summary-value.gray { color: #475569; }
+
+    .store-summary-grid {
+      display: flex;
+      gap: 10px;
+      padding: 8px 10px 10px;
+    }
+
+    .store-mini-table {
+      flex: 1;
+      width: 50%;
+      border-collapse: collapse;
+      font-size: 6.1pt;
+    }
+
+    .store-mini-table th {
+      background: #FBFCFE;
+      color: #6B7280;
+      text-transform: uppercase;
+      letter-spacing: 0.35px;
+      font-size: 4.8pt;
+      font-weight: 700;
+      padding: 3px 5px;
+      border-bottom: 1px solid #E8EBF2;
+      text-align: left;
+    }
+
+    .store-mini-table td {
+      padding: 3px 5px;
+      border-bottom: 1px solid #F0F2F7;
+      color: #333;
+      line-height: 1.35;
+      vertical-align: top;
+    }
+
+    .store-mini-table tr:last-child td { border-bottom: none; }
+    .store-mini-rank { width: 14px; font-weight: 800; color: #1B2B5E; }
+    .store-mini-store { width: auto; }
+    .store-mini-num { text-align: right; font-weight: 700; color: #1B2B5E; white-space: nowrap; }
+
     .snap-kpi-value,
     .snap-reach-value,
     .snap-inv-num,
@@ -908,6 +1012,61 @@
       <ul>{% for b in narrative_sections.recommendations %}<li>{{ b }}</li>{% endfor %}</ul>
     </div>
   </div>
+
+  {% if store_summary and store_summary.total_active > 5 %}
+  <div class="store-summary-card">
+    <div class="store-summary-head">
+      <div class="store-summary-title">Store Coverage Summary</div>
+      <div class="store-summary-sub">Executive summary for active outlets. Full transaction detail remains in HTML and exports.</div>
+    </div>
+    <div class="store-summary-metrics">
+      <div class="store-summary-pill">
+        <div class="store-summary-kicker">Active Stores</div>
+        <div class="store-summary-value">{{ store_summary.total_active }}</div>
+      </div>
+      <div class="store-summary-pill">
+        <div class="store-summary-kicker">Top 5 Revenue Share</div>
+        <div class="store-summary-value red">{{ store_summary.top5_share }}%</div>
+      </div>
+      <div class="store-summary-pill">
+        <div class="store-summary-kicker">Other Stores</div>
+        <div class="store-summary-value gray">{{ store_summary.other_count }} · {{ store_summary.other_revenue }}</div>
+      </div>
+    </div>
+    <div class="store-summary-grid">
+      <table class="store-mini-table">
+        <thead>
+          <tr><th style="width:14px;">#</th><th>Store</th><th style="text-align:right;">Revenue</th><th style="text-align:right;">Share</th></tr>
+        </thead>
+        <tbody>
+          {% for row in store_summary.left_rows %}
+          <tr>
+            <td class="store-mini-rank">{{ row.rank }}</td>
+            <td class="store-mini-store">{{ row.store }}</td>
+            <td class="store-mini-num">{{ row.value }}</td>
+            <td class="store-mini-num">{{ row.share }}%</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <table class="store-mini-table">
+        <thead>
+          <tr><th style="width:14px;">#</th><th>Store</th><th style="text-align:right;">Revenue</th><th style="text-align:right;">Share</th></tr>
+        </thead>
+        <tbody>
+          {% for row in store_summary.right_rows %}
+          <tr>
+            <td class="store-mini-rank">{{ row.rank }}</td>
+            <td class="store-mini-store">{{ row.store }}</td>
+            <td class="store-mini-num">{{ row.value }}</td>
+            <td class="store-mini-num">{{ row.share }}%</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
 
   <!-- ── Inventory + Stock Movement Tables ───────────────────────────────── -->
   <div class="tables-section">

@@ -598,7 +598,10 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                              total_revenue=total_portfolio_revenue,
                              total_qty=total_qty_sum,
                              total_stores=len(all_stores),
-                             brand_count=len(brands))
+                             brand_count=len(brands),
+                             report_type=report_type,
+                             start_date=start_date,
+                             end_date=end_date)
         else:
             report_id = ds.save_report(
                 start_date=start_date, end_date=end_date,
@@ -609,6 +612,7 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                 brand_count=len(brands),
                 report_type=report_type,
             )
+        report_meta = ds.get_report(report_id) or {}
         _upd(report_id=report_id)
         _queue_catalog_candidates(catalog_df, source_filename=filename, report_id=report_id)
 
@@ -641,7 +645,6 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                     pass
             # Portfolio narrative
             try:
-                report_meta = ds.get_report(report_id)
                 pt = generate_portfolio_narrative(all_kpis, report_meta)
                 if pt:
                     ds.save_narrative(report_id, '__portfolio__', pt)
@@ -683,6 +686,8 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                         start_date=start_date, end_date=end_date,
                         portfolio_avg_revenue=portfolio_avg_revenue,
                         total_portfolio_revenue=total_portfolio_revenue,
+                        report_type=report_type or report_meta.get('report_type'),
+                        month_label=report_meta.get('month_label'),
                         ai_narrative=ai_narratives.get(brand_name),
                         sheets_url=sheets_urls.get(brand_name),
                     )
@@ -709,7 +714,9 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                     generate_html(output_path=html_path, brand_name=brand_name, kpis=kpis,
                                   start_date=start_date, end_date=end_date,
                                   portfolio_avg_revenue=portfolio_avg_revenue,
-                                  total_portfolio_revenue=total_portfolio_revenue)
+                                  total_portfolio_revenue=total_portfolio_revenue,
+                                  report_type=report_type or report_meta.get('report_type'),
+                                  month_label=report_meta.get('month_label'))
                     return True, None
                 except Exception as e:
                     if attempt < max_retries - 1:
@@ -1050,6 +1057,7 @@ def generate():
     file       = request.files.get('tally_file')
     start_date = request.form.get('start_date', '').strip()
     end_date   = request.form.get('end_date', '').strip()
+    report_type = request.form.get('report_type', '').strip() or None
 
     if not file or file.filename == '':
         return jsonify({'success': False, 'error': 'No file uploaded.'}), 400
@@ -1102,7 +1110,10 @@ def generate():
                          total_revenue=total_portfolio_revenue,
                          total_qty=total_qty_sum,
                          total_stores=len(all_stores),
-                         brand_count=len(brands))
+                         brand_count=len(brands),
+                         report_type=report_type,
+                         start_date=start_date,
+                         end_date=end_date)
     else:
         report_id = ds.save_report(
             start_date=start_date,
@@ -1112,18 +1123,21 @@ def generate():
             total_qty=total_qty_sum,
             total_stores=len(all_stores),
             brand_count=len(brands),
+            report_type=report_type,
         )
     _queue_catalog_candidates(catalog_df, source_filename=file.filename, report_id=report_id)
 
     # Generate files
     ok_pdf = ok_html = 0
     errors = []
+    month_tag = datetime.strptime(start_date, '%Y-%m-%d').strftime('%b%Y')
+    report_meta = ds.get_report(report_id) or {}
 
     for brand_name in brands:
         kpis = all_kpis[brand_name]
         safe = _safe_name(brand_name)
-        pdf_path  = os.path.join(PDF_DIR,  f"{safe}_Report_Feb2026.pdf")
-        html_path = os.path.join(HTML_DIR, f"{safe}_Report_Feb2026.html")
+        pdf_path  = os.path.join(PDF_DIR,  f"{safe}_Report_{month_tag}.pdf")
+        html_path = os.path.join(HTML_DIR, f"{safe}_Report_{month_tag}.html")
 
         perf = calculate_perf_score(kpis, portfolio_avg_revenue)
         kpis['perf_score'] = perf
@@ -1150,6 +1164,8 @@ def generate():
                 end_date=end_date,
                 portfolio_avg_revenue=portfolio_avg_revenue,
                 total_portfolio_revenue=total_portfolio_revenue,
+                report_type=report_type or report_meta.get('report_type'),
+                month_label=report_meta.get('month_label'),
             )
             ok_pdf += 1
         except Exception as e:
@@ -1165,14 +1181,14 @@ def generate():
                 end_date=end_date,
                 portfolio_avg_revenue=portfolio_avg_revenue,
                 total_portfolio_revenue=total_portfolio_revenue,
+                report_type=report_type or report_meta.get('report_type'),
+                month_label=report_meta.get('month_label'),
             )
             ok_html += 1
         except Exception as e:
             errors.append({'brand': brand_name, 'type': 'HTML', 'error': str(e)})
 
     # Portfolio dashboard
-    start_dt = datetime.strptime(start_date, '%Y-%m-%d')
-    month_tag = start_dt.strftime('%b%Y')
     portfolio_path = os.path.join(HTML_DIR, f"PORTFOLIO_Dashboard_{month_tag}.html")
     try:
         generate_portfolio_html(
@@ -1897,12 +1913,25 @@ def _build_brand_report_pdf_bytes(report_id: int, brand_name: str,
         end_date=report['end_date'],
         portfolio_avg_revenue=avg_portfolio,
         total_portfolio_revenue=total_portfolio,
+        report_type=report.get('report_type'),
+        month_label=report.get('month_label'),
     )
     return render_pdf_bytes(html)
 
 
-_REPORT_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), 'templates', 'report_template.html')
-_REPORT_TEMPLATE_MTIME = os.path.getmtime(_REPORT_TEMPLATE_PATH) if os.path.isfile(_REPORT_TEMPLATE_PATH) else 0
+_REPORT_DEPENDENCY_PATHS = [
+    os.path.join(os.path.dirname(__file__), 'templates', 'report_template.html'),
+    os.path.join(os.path.dirname(__file__), 'modules', 'pdf_generator_html.py'),
+    os.path.join(os.path.dirname(__file__), 'modules', 'charts_html.py'),
+]
+
+
+def _report_render_signature_mtime() -> float:
+    mtimes = []
+    for path in _REPORT_DEPENDENCY_PATHS:
+        if os.path.isfile(path):
+            mtimes.append(os.path.getmtime(path))
+    return max(mtimes) if mtimes else 0
 
 
 @app.route('/api/report_pdf/<int:report_id>/<path:brand_name>')
@@ -1917,8 +1946,10 @@ def api_report_pdf(report_id, brand_name):
     fname     = f"{safe}_Report_{month_tag}.pdf"
     disk_path = os.path.join(PDF_DIR, fname)
 
-    # Fast path: serve pre-generated PDF only if it was built after the current template
-    if os.path.isfile(disk_path) and os.path.getmtime(disk_path) >= _REPORT_TEMPLATE_MTIME:
+    render_signature_mtime = _report_render_signature_mtime()
+
+    # Fast path: serve pre-generated PDF only if it was built after the current print pipeline
+    if os.path.isfile(disk_path) and os.path.getmtime(disk_path) >= render_signature_mtime:
         return send_file(disk_path, as_attachment=True, download_name=fname,
                          mimetype='application/pdf')
 
@@ -1974,11 +2005,13 @@ def api_report_pdf_bulk(report_id):
     zip_name  = (f"Selected_Brand_Reports_{month_tag}.zip" if requested_brands
                  else f"All_Brand_Reports_{month_tag}.zip")
 
+    render_signature_mtime = _report_render_signature_mtime()
+
     def _get_pdf(brand_name):
         safe      = _safe_name(brand_name)
         disk_path = os.path.join(PDF_DIR, f"{safe}_Report_{month_tag}.pdf")
-        # Serve from disk if available (fastest path)
-        if os.path.isfile(disk_path):
+        # Serve from disk only if it matches the current render pipeline.
+        if os.path.isfile(disk_path) and os.path.getmtime(disk_path) >= render_signature_mtime:
             with open(disk_path, 'rb') as fh:
                 return brand_name, fh.read(), None
         try:
@@ -2066,6 +2099,8 @@ def api_report_html(report_id, brand_name):
             end_date=report['end_date'],
             portfolio_avg_revenue=avg_portfolio,
             total_portfolio_revenue=total_portfolio,
+            report_type=report.get('report_type'),
+            month_label=report.get('month_label'),
         )
     except Exception as e:
         return jsonify({'error': str(e)}), 500

@@ -483,7 +483,7 @@
       <div class="header-logo-placeholder">D</div>
     {% endif %}
     <div class="header-center">
-      <h1>February Monthly Sales Report</h1>
+      <h1>{{ report_title }}</h1>
       <div class="sub">{{ brand_name }} &nbsp;|&nbsp; {{ start_date }} – {{ end_date }}</div>
     </div>
     <div class="header-right">
@@ -619,7 +619,7 @@
             <div class="card">
               <div class="card-title">
                 Top Selling Supermarkets by Value
-                <span class="card-title-sub">[Period]</span>
+                <span class="card-title-sub">{{ period_badge }}</span>
               </div>
               <table class="rank-table">
                 {% for row in top_stores_table %}
@@ -647,7 +647,7 @@
             <div class="card">
               <div class="card-title">
                 Top Selling Products by Value
-                <span class="card-title-sub">[Period]</span>
+                <span class="card-title-sub">{{ period_badge }}</span>
               </div>
               <table class="rank-table">
                 {% for row in top_products_table %}

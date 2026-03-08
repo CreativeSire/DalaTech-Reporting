@@ -437,21 +437,32 @@ class DataStore:
     @staticmethod
     def _infer_report_type(start_date, end_date, override=None):
         """Auto-detect report period type from date range, or use explicit override."""
-        if override and override in ('weekly', 'monthly', 'quarterly', 'custom'):
+        if override and override in ('weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'):
             return override
         from datetime import date as _date
         try:
             s = datetime.strptime(start_date, '%Y-%m-%d').date()
             e = datetime.strptime(end_date,   '%Y-%m-%d').date()
             days = (e - s).days + 1
+            from datetime import timedelta as _td
+            is_full_month = s.day == 1 and (e + _td(days=1)).day == 1
+            is_full_year = s.month == 1 and s.day == 1 and e.month == 12 and e.day == 31
+            is_quarter = (
+                s.day == 1 and
+                s.month in (1, 4, 7, 10) and
+                e.month == s.month + 2 and
+                ((e.month in (3, 12) and e.day == 31) or (e.month == 6 and e.day == 30) or (e.month == 9 and e.day == 30))
+            )
+            if is_full_year or days in (365, 366):
+                return 'yearly'
+            if is_quarter or 85 <= days <= 95:
+                return 'quarterly'
+            if is_full_month or 28 <= days <= 31:
+                return 'monthly'
             if days <= 7:
                 return 'weekly'
             if days <= 14:
                 return 'biweekly'
-            if 28 <= days <= 31:
-                return 'monthly'
-            if 85 <= days <= 95:
-                return 'quarterly'
             return 'custom'
         except Exception:
             return 'custom'
@@ -466,9 +477,13 @@ class DataStore:
                 return f"Week of {s.strftime('%d %b %Y')}"
             if report_type == 'biweekly':
                 return f"{s.strftime('%d %b')} – {e.strftime('%d %b %Y')}"
+            if report_type == 'yearly':
+                return f"{s.year}"
             if report_type == 'quarterly':
                 return f"Q{((s.month - 1) // 3) + 1} {s.year}"
-            return s.strftime('%b %Y')     # monthly / custom
+            if report_type == 'monthly':
+                return s.strftime('%b %Y')
+            return f"{s.strftime('%d %b %Y')} – {e.strftime('%d %b %Y')}"
         except Exception:
             return start_date
 
@@ -546,15 +561,27 @@ class DataStore:
                       total_stores, brand_count, report_type=None, start_date=None, end_date=None):
         """Update an existing report row's stats after re-generation."""
         now = datetime.now().isoformat(timespec='seconds')
+        rt = self._infer_report_type(start_date, end_date, report_type) if start_date and end_date else report_type
+        month_label = self._build_month_label(start_date, end_date, rt) if start_date and end_date and rt else None
         with self._connect() as conn:
-            conn.execute(
-                """UPDATE reports SET
-                   xls_filename=?, total_revenue=?, total_qty=?, total_stores=?,
-                   brand_count=?, generated_at=?
-                   WHERE id=?""",
-                (xls_filename, total_revenue, total_qty, total_stores,
-                 brand_count, now, report_id)
-            )
+            if rt and month_label:
+                conn.execute(
+                    """UPDATE reports SET
+                       xls_filename=?, total_revenue=?, total_qty=?, total_stores=?,
+                       brand_count=?, generated_at=?, report_type=?, month_label=?
+                       WHERE id=?""",
+                    (xls_filename, total_revenue, total_qty, total_stores,
+                     brand_count, now, rt, month_label, report_id)
+                )
+            else:
+                conn.execute(
+                    """UPDATE reports SET
+                       xls_filename=?, total_revenue=?, total_qty=?, total_stores=?,
+                       brand_count=?, generated_at=?
+                       WHERE id=?""",
+                    (xls_filename, total_revenue, total_qty, total_stores,
+                     brand_count, now, report_id)
+                )
 
     # ── Brand KPI operations ──────────────────────────────────────────────────
 

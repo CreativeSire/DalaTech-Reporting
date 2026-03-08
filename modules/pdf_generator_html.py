@@ -76,20 +76,96 @@ def _daily_sparkline_svg(daily_df, col: str = 'Revenue',
     )
 
 
+def _infer_report_type(start_date: str, end_date: str, override: str | None = None) -> str:
+    """Infer the report period from dates when no explicit type is supplied."""
+    report_type = (override or '').strip().lower()
+    if report_type in {'weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'}:
+        return report_type
+
+    try:
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+    except Exception:
+        return 'custom'
+
+    days = (end_dt - start_dt).days + 1
+    is_full_year = start_dt.month == 1 and start_dt.day == 1 and end_dt.month == 12 and end_dt.day == 31
+    is_quarter = (
+        start_dt.day == 1 and
+        start_dt.month in (1, 4, 7, 10) and
+        end_dt.month == start_dt.month + 2 and
+        ((end_dt.month in (3, 12) and end_dt.day == 31) or
+         (end_dt.month == 6 and end_dt.day == 30) or
+         (end_dt.month == 9 and end_dt.day == 30))
+    )
+    next_day = end_dt.toordinal() + 1
+    next_dt = datetime.fromordinal(next_day)
+    is_full_month = start_dt.day == 1 and next_dt.day == 1
+
+    if is_full_year or days in (365, 366):
+        return 'yearly'
+    if is_quarter or 85 <= days <= 95:
+        return 'quarterly'
+    if is_full_month or 28 <= days <= 31:
+        return 'monthly'
+    if days <= 7:
+        return 'weekly'
+    if days <= 14:
+        return 'biweekly'
+    return 'custom'
+
+
 def _build_narrative_sections(brand_name: str, kpis: dict,
-                               start_date: str, end_date: str) -> dict:
+                               start_date: str, end_date: str,
+                               report_type: str | None = None,
+                               month_label: str | None = None) -> dict:
     """Build structured narrative bullet sections matching the ORISIRISI PDF format."""
     start_dt   = datetime.strptime(start_date, '%Y-%m-%d')
     end_dt     = datetime.strptime(end_date,   '%Y-%m-%d')
     month_name = start_dt.strftime('%B')
     report_days = (end_dt - start_dt).days + 1
 
-    # Determine whether this is a full month (≥22 days) or a partial/weekly report
-    is_full_month = report_days >= 22
-    weeks_elapsed = max(1, (report_days + 6) // 7)  # ceiling division
+    report_type = _infer_report_type(start_date, end_date, report_type)
+    is_closed_period = report_type in ('monthly', 'quarterly', 'yearly')
+    weeks_elapsed = max(1, (report_days + 6) // 7)
 
     next_month_num  = end_dt.month % 12 + 1
     next_month_name = _calendar.month_name[next_month_num]
+    next_year = start_dt.year + 1
+
+    if report_type == 'weekly':
+        title = f'Week of {start_dt.strftime("%d %b %Y")} Sales Report For {brand_name}'
+        period_label = f'Week of {start_dt.strftime("%d %b %Y")} KPIs'
+        period_desc = f'week of {start_dt.strftime("%d %b %Y")}'
+        next_period_label = 'Recommendations'
+    elif report_type == 'biweekly':
+        range_label = f'{start_dt.strftime("%d %b")} - {end_dt.strftime("%d %b %Y")}'
+        title = f'Biweekly Sales Report For {brand_name}'
+        period_label = f'{range_label} KPIs'
+        period_desc = f'{report_days}-day period'
+        next_period_label = 'Recommendations'
+    elif report_type == 'quarterly':
+        quarter = ((start_dt.month - 1) // 3) + 1
+        title = f'Q{quarter} {start_dt.year} Quarterly Sales Report For {brand_name}'
+        period_label = f'Q{quarter} {start_dt.year} KPIs'
+        period_desc = f'quarter of Q{quarter} {start_dt.year}'
+        next_period_label = 'Recommendations'
+    elif report_type == 'yearly':
+        title = f'{start_dt.year} Annual Sales Report For {brand_name}'
+        period_label = f'{start_dt.year} KPIs'
+        period_desc = f'year {start_dt.year}'
+        next_period_label = 'Recommendations'
+    elif report_type == 'monthly':
+        title = f'{month_name} Monthly Sales Report For {brand_name}'
+        period_label = f'{month_name} KPIs'
+        period_desc = 'month'
+        next_period_label = 'Recommendations'
+    else:
+        label = month_label or f'{start_dt.strftime("%d %b %Y")} - {end_dt.strftime("%d %b %Y")}'
+        title = f'Sales Report For {brand_name}'
+        period_label = f'{label} KPIs'
+        period_desc = f'{report_days}-day period'
+        next_period_label = 'Recommendations'
 
     def _full(v):
         return f'\u20a6{v:,.2f}'
@@ -113,6 +189,7 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
     top_stores_df = kpis.get('top_stores')
     top_store_name, top_store_rev = '', 0.0
     if top_stores_df is not None and not top_stores_df.empty:
+        top_stores_df = top_stores_df.sort_values('Revenue', ascending=False)
         top_store_name = top_stores_df.iloc[0]['Store']
         top_store_rev  = float(top_stores_df.iloc[0]['Revenue'])
 
@@ -120,6 +197,7 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
     top_product_name, top_product_rev = '', 0.0
     bottom_product_name, bottom_product_rev = '', 0.0
     if product_df is not None and not product_df.empty:
+        product_df = product_df.sort_values('Revenue', ascending=False)
         top_product_name = product_df.iloc[0]['SKU']
         top_product_rev  = float(product_df.iloc[0]['Revenue'])
         if len(product_df) > 1:
@@ -129,7 +207,6 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
     closing_stock_df = kpis.get('closing_stock')
 
     # ── KPI bullets ───────────────────────────────────────────────────────────
-    period_desc = 'month' if is_full_month else f'first {report_days} day{"s" if report_days != 1 else ""} of {month_name}'
     kpi_bullets = [
         f'Total Sales Revenue: {_full(total_rev)} ({period_desc}).',
         f'Total Quantity Sold: {total_qty:,.2f} packs.',
@@ -145,26 +222,26 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
     # ── Strengths ─────────────────────────────────────────────────────────────
     strengths = []
 
-    if is_full_month:
+    if is_closed_period:
         nonzero = [v for v in weekly_rev_pct if v > 0]
         if len(nonzero) >= 2 and nonzero[-1] > nonzero[0]:
             strengths.append(
                 f'Consistent Growth Trend: {brand_name} maintained a steady upward trajectory '
-                f'across the month, with WoW revenue share growing from {nonzero[0]:.0f}% to {nonzero[-1]:.0f}%.'
+                f'across the reporting period, with WoW revenue share growing from {nonzero[0]:.0f}% to {nonzero[-1]:.0f}%.'
             )
         elif wow_rev > 0:
             strengths.append(
-                f'Positive Momentum: Revenue grew {wow_rev:+.1f}% week-over-week in the final week, '
+                f'Positive Momentum: Revenue grew {wow_rev:+.1f}% week-over-week in the final stretch, '
                 f'demonstrating strong closing momentum for {brand_name}.'
             )
     else:
-        # Partial month: focus on what happened in the first N days
+        # Open period: focus on current pacing
         if total_rev > 0 and trading_days > 0:
             daily_avg = total_rev / trading_days
             projected = daily_avg * 28
             strengths.append(
-                f'Opening Momentum: {brand_name} generated {_full(total_rev)} in the first '
-                f'{report_days} day{"s" if report_days != 1 else ""}, implying a {_short(projected)} '
+                f'Current Momentum: {brand_name} generated {_full(total_rev)} in this '
+                f'{report_days}-day window, implying a {_short(projected)} '
                 f'monthly run rate if this pace holds.'
             )
 
@@ -181,7 +258,7 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
             f'contributing {_short(top_store_rev)}.'
         )
 
-    if is_full_month and repeat_pct >= 50:
+    if is_closed_period and repeat_pct >= 50:
         strengths.append(
             f'Strong Loyalty: {repeat_pct:.0f}% repeat order rate demonstrates solid customer retention.'
         )
@@ -195,13 +272,13 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
     # ── Gaps ──────────────────────────────────────────────────────────────────
     gaps = []
 
-    if store_count < 5 and not is_full_month:
+    if store_count < 5 and not is_closed_period:
         gaps.append(
             f'Limited Distribution: Only {store_count} store{"s" if store_count != 1 else ""} '
-            f'active in the first {report_days} day{"s" if report_days != 1 else ""}. '
+            f'active in this {report_days}-day window. '
             f'Significantly more outlets need to be activated to build meaningful sales volume.'
         )
-    elif store_count < 10 and is_full_month:
+    elif store_count < 10 and is_closed_period:
         gaps.append(
             f'Narrow Distribution Base: {store_count} active stores is below the threshold for '
             f'sustainable revenue. Expanding reach is the highest-priority growth lever.'
@@ -224,13 +301,13 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
                 f'than 10 packs in stock, which may restrict sales if demand picks up.'
             )
 
-    if 0 < stock_days < 14 and is_full_month:
+    if 0 < stock_days < 14 and is_closed_period:
         gaps.append(
             f'Stock Cover Risk: At {stock_days:.0f} days of remaining cover, inventory replenishment '
             f'must be initiated immediately to avoid stockouts next month.'
         )
 
-    if is_full_month and repeat_pct < 40 and store_count > 0:
+    if is_closed_period and repeat_pct < 40 and store_count > 0:
         gaps.append(
             f'Low Repeat Rate: {repeat_pct:.0f}% repeat ordering is below the 40% benchmark, '
             f'suggesting inconsistent stock availability or weak demand at current outlets.'
@@ -245,18 +322,20 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
     # ── Recommendations ───────────────────────────────────────────────────────
     recs = []
 
-    if is_full_month:
-        # Full month → strategic recommendations for NEXT month
-        rec_label = 'Recommendations'
+    if is_closed_period:
+        rec_label = next_period_label
 
-        # Stock replenishment
         if closing_stock_df is not None and not closing_stock_df.empty:
             low = closing_stock_df[closing_stock_df['Closing Stock (Cartons)'] < 10]
             for _, row in low.head(2).iterrows():
                 needed = max(10, int(row['Closing Stock (Cartons)'] or 0) * 4)
+                next_label = next_month_name if report_type == 'monthly' else (
+                    f'Q{((start_dt.month - 1) // 3) + 2}' if report_type == 'quarterly' and ((start_dt.month - 1) // 3) < 3
+                    else (f'Q1 {next_year}' if report_type == 'quarterly' else str(next_year))
+                )
                 recs.append(
                     f'Stock Optimization: Deliver at least {needed} packs of {row["SKU"]} to the '
-                    f'warehouse before {next_month_name} begins to meet anticipated demand.'
+                    f'warehouse before {next_label} begins to meet anticipated demand.'
                 )
 
         # Underperformer promotion
@@ -269,21 +348,28 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
 
         # Store expansion
         if store_count < 30:
+            next_label = next_month_name if report_type == 'monthly' else (
+                f'Q{((start_dt.month - 1) // 3) + 2}' if report_type == 'quarterly' and ((start_dt.month - 1) // 3) < 3
+                else (f'Q1 {next_year}' if report_type == 'quarterly' else str(next_year))
+            )
             recs.append(
                 f'Distribution Expansion: Target at least {store_count + 8} active stores in '
-                f'{next_month_name} to reduce single-store revenue concentration risk.'
+                f'{next_label} to reduce single-store revenue concentration risk.'
             )
 
         # Retention
         if repeat_pct < 40:
+            next_label = next_month_name if report_type == 'monthly' else (
+                f'Q{((start_dt.month - 1) // 3) + 2}' if report_type == 'quarterly' and ((start_dt.month - 1) // 3) < 3
+                else (f'Q1 {next_year}' if report_type == 'quarterly' else str(next_year))
+            )
             recs.append(
                 f'Retention Drive: Re-engage the {store_count} current stores with targeted '
-                f'incentives to push the repeat order rate above 50% in {next_month_name}.'
+                f'incentives to push the repeat order rate above 50% in {next_label}.'
             )
 
     else:
-        # Partial month → actionable focus items for the REMAINDER of this month
-        rec_label = 'Recommendations'
+        rec_label = next_period_label
         week_label = (
             'Week 1' if weeks_elapsed == 1 else
             f'Week {weeks_elapsed}'
@@ -334,15 +420,16 @@ def _build_narrative_sections(brand_name: str, kpis: dict,
         )
 
     return {
-        'report_title':     f'{month_name} Monthly Sales Report For {brand_name}',
-        'period_label':     f'{month_name} KPIs',
+        'report_title':     title,
+        'period_label':     period_label,
         'next_month_label': rec_label,
         'kpi_bullets':      kpi_bullets,
         'strengths':        strengths,
         'gaps':             gaps,
         'recommendations':  recs,
-        'is_full_month':    is_full_month,
+        'is_full_month':    is_closed_period,
         'report_days':      report_days,
+        'report_type':      report_type,
     }
 
 
@@ -350,6 +437,8 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
                            start_date: str, end_date: str,
                            portfolio_avg_revenue: float = None,
                            total_portfolio_revenue: float = None,
+                           report_type: str | None = None,
+                           month_label: str | None = None,
                            ai_narrative: str = None,
                            sheets_url: str = None) -> str:
     """Render the print-oriented report HTML used for PDF export."""
@@ -360,7 +449,12 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
     stock_chart        = chart_stock_vertical(kpis['closing_stock'], _for_print=True)
     reorder_chart      = chart_reorder(kpis['reorder_analysis'])
     heatmap_chart      = chart_store_heatmap(kpis['store_heatmap_df'])
-    top_stores_chart   = chart_top_stores(kpis['top_stores'], _for_print=True)
+    top_stores_chart   = chart_top_stores(
+        kpis['top_stores'],
+        _for_print=True,
+        total_store_count=int(kpis.get('num_stores') or kpis.get('store_count') or 0),
+        total_revenue=float(kpis.get('total_revenue') or 0),
+    )
     top_products_chart = chart_product_value(kpis['product_value'], _for_print=True)
 
     # ── Performance scorecard ──────────────────────────────────────────────────
@@ -379,13 +473,16 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
 
     total_rev = kpis['total_revenue'] or 1
 
+    top_stores_sorted = kpis['top_stores'].sort_values('Revenue', ascending=False) if not kpis['top_stores'].empty else kpis['top_stores']
+    product_value_sorted = kpis['product_value'].sort_values('Revenue', ascending=False) if not kpis['product_value'].empty else kpis['product_value']
+
     top_stores_table = [
         {
             'store': r['Store'],
             'value': _naira_k(r['Revenue']),
             'pct':   round(r['Revenue'] / total_rev * 100, 1),
         }
-        for _, r in kpis['top_stores'].head(5).iterrows()
+        for _, r in top_stores_sorted.head(5).iterrows()
     ]
 
     top_products_table = [
@@ -394,8 +491,31 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
             'value': _naira_k(r['Revenue']),
             'pct':   round(r['Revenue'] / total_rev * 100, 1),
         }
-        for _, r in kpis['product_value'].head(5).iterrows()
+        for _, r in product_value_sorted.head(5).iterrows()
     ]
+
+    store_summary = None
+    if top_stores_sorted is not None and not top_stores_sorted.empty:
+        top5_revenue = float(top_stores_sorted.head(5)['Revenue'].sum())
+        total_active_stores = int(kpis.get('num_stores') or kpis.get('store_count') or len(top_stores_sorted))
+        other_revenue = max(0.0, float(total_rev) - top5_revenue)
+        store_rows = []
+        for rank, (_, row) in enumerate(top_stores_sorted.head(10).iterrows(), start=1):
+            revenue = float(row['Revenue'])
+            store_rows.append({
+                'rank': rank,
+                'store': row['Store'],
+                'value': _naira_k(revenue),
+                'share': round(revenue / total_rev * 100, 1),
+            })
+        store_summary = {
+            'total_active': total_active_stores,
+            'top5_share': round(top5_revenue / total_rev * 100, 1) if total_rev > 0 else 0,
+            'other_count': max(0, int(total_active_stores - 5)),
+            'other_revenue': _naira_k(other_revenue),
+            'left_rows': store_rows[:5],
+            'right_rows': store_rows[5:10],
+        }
 
     closing_stock_table = [
         {
@@ -417,14 +537,21 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
     ]
 
     # ── Structured narrative sections ──────────────────────────────────────────
-    narrative_sections = _build_narrative_sections(brand_name, kpis, start_date, end_date)
+    narrative_sections = _build_narrative_sections(
+        brand_name,
+        kpis,
+        start_date,
+        end_date,
+        report_type=report_type,
+        month_label=month_label,
+    )
 
     # ── Dates ──────────────────────────────────────────────────────────────────
     start_dt      = datetime.strptime(start_date, '%Y-%m-%d')
     end_dt        = datetime.strptime(end_date,   '%Y-%m-%d')
     display_start = start_dt.strftime('%d %b %Y')
     display_end   = end_dt.strftime('%d %b %Y')
-    month_label   = start_dt.strftime('%B')
+    report_period_label = month_label or narrative_sections['period_label'].replace(' KPIs', '')
 
     # ── Logo ───────────────────────────────────────────────────────────────────
     logo_data = ''
@@ -458,7 +585,7 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
         brand_name=brand_name,
         start_date=display_start,
         end_date=display_end,
-        month_label=month_label,
+        month_label=report_period_label,
         kpis=kpis,
         sheets_url=sheets_url,
         logo_path=logo_data,
@@ -479,6 +606,7 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
         top_products_chart=top_products_chart,
         top_stores_table=top_stores_table,
         top_products_table=top_products_table,
+        store_summary=store_summary,
         closing_stock_table=closing_stock_table,
         pickup_table=pickup_table,
         supply_table=supply_table,
@@ -742,6 +870,8 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
                       start_date: str, end_date: str,
                       portfolio_avg_revenue: float = None,
                       total_portfolio_revenue: float = None,
+                      report_type: str | None = None,
+                      month_label: str | None = None,
                       ai_narrative: str = None,
                       sheets_url: str = None) -> str:
     """
@@ -767,6 +897,8 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
         end_date=end_date,
         portfolio_avg_revenue=portfolio_avg_revenue,
         total_portfolio_revenue=total_portfolio_revenue,
+        report_type=report_type,
+        month_label=month_label,
         ai_narrative=ai_narrative,
         sheets_url=sheets_url,
     )
