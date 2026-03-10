@@ -2,8 +2,101 @@
 {% block title %}{{ brand_name }} — DALA Analytics{% endblock %}
 {% block page_title %}{{ brand_name }}{% endblock %}
 
+{% block head %}
+<style>
+  .brand-view-shell {
+    margin-bottom: 20px;
+    padding: 16px 18px;
+    background:
+      radial-gradient(circle at top right, rgba(46, 134, 193, 0.12), transparent 35%),
+      linear-gradient(135deg, #ffffff 0%, #f6f8fe 100%);
+  }
+  .brand-view-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 12px;
+  }
+  .brand-view-title {
+    margin-bottom: 4px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .brand-view-summary {
+    color: var(--navy);
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.4;
+  }
+  .brand-view-note {
+    max-width: 420px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .brand-view-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .brand-view-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 116px;
+    padding: 10px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(27, 43, 94, 0.12);
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 10px 26px rgba(27, 43, 94, 0.06);
+    color: var(--navy);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .2px;
+    text-decoration: none;
+    transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease, background .15s ease;
+  }
+  .brand-view-pill:hover {
+    transform: translateY(-1px);
+    border-color: rgba(27, 43, 94, 0.2);
+    box-shadow: 0 14px 32px rgba(27, 43, 94, 0.1);
+  }
+  .brand-view-pill.active {
+    border-color: transparent;
+    background: linear-gradient(135deg, var(--navy), #2c4aa0);
+    box-shadow: 0 14px 32px rgba(27, 43, 94, 0.22);
+    color: #ffffff;
+  }
+  .brand-focus-target {
+    scroll-margin-top: 92px;
+    transition: box-shadow .25s ease, border-color .25s ease, transform .25s ease;
+  }
+  .brand-focus-target.is-focused {
+    border-color: rgba(46, 134, 193, 0.34);
+    box-shadow: 0 0 0 3px rgba(46, 134, 193, 0.14), 0 12px 36px rgba(27, 43, 94, 0.12);
+    transform: translateY(-2px);
+  }
+  @media (max-width: 900px) {
+    .brand-view-header {
+      flex-direction: column;
+    }
+    .brand-view-note {
+      max-width: none;
+    }
+    .brand-view-pill {
+      min-width: 0;
+      flex: 1 1 160px;
+    }
+  }
+</style>
+{% endblock %}
+
 {% block topbar_actions %}
-<a href="{{ url_for('trends', scope='brand', brand=brand_name) }}" class="btn btn-outline btn-sm">Open Trends</a>
+<a href="{% if trend_month_value %}{{ url_for('trends', scope='brand', brand=brand_name, month=trend_month_value) }}{% else %}{{ url_for('trends', scope='brand', brand=brand_name) }}{% endif %}" class="btn btn-outline btn-sm">Open Trends</a>
 {% if report %}
 <a href="{{ url_for('api_report_pdf', report_id=report.id, brand_name=brand_name) }}" class="btn btn-primary btn-sm">⬇ Download PDF</a>
 <a href="{{ url_for('api_report_html', report_id=report.id, brand_name=brand_name) }}" target="_blank" class="btn btn-outline btn-sm">Open Interactive</a>
@@ -17,8 +110,26 @@
 </div>
 {% else %}
 
+<div class="card brand-view-shell">
+  <div class="brand-view-header">
+    <div>
+      <div class="brand-view-title">Brand Intelligence Views</div>
+      <div class="brand-view-summary">{{ brand_name }} can be explored as an overview, trends lens, forecast lens, or activity lens.</div>
+    </div>
+    <div class="brand-view-note">
+      Portfolio trends stay on the main trends page. This page keeps the partner-specific story and now deep-links to the section you want.
+    </div>
+  </div>
+  <div class="brand-view-pills">
+    <a href="{{ url_for('brand_detail', brand_name=brand_name, report_id=report_id, focus='overview') }}" class="brand-view-pill {% if focus == 'overview' %}active{% endif %}">Overview</a>
+    <a href="{% if trend_month_value %}{{ url_for('trends', scope='brand', brand=brand_name, month=trend_month_value) }}{% else %}{{ url_for('trends', scope='brand', brand=brand_name) }}{% endif %}" class="brand-view-pill">Trends</a>
+    <a href="{{ url_for('brand_detail', brand_name=brand_name, report_id=report_id, focus='forecast') }}" class="brand-view-pill {% if focus == 'forecast' %}active{% endif %}">Forecast</a>
+    <a href="{{ url_for('brand_detail', brand_name=brand_name, report_id=report_id, focus='activity') }}" class="brand-view-pill {% if focus == 'activity' %}active{% endif %}">Activity</a>
+  </div>
+</div>
+
 <!-- KPI CARDS -->
-<div class="grid-4" style="margin-bottom:20px;">
+<div class="grid-4 brand-focus-target" id="brandOverview" style="margin-bottom:20px;">
   <div class="kpi-card red">
     <div class="kpi-label">Total Revenue</div>
     <div class="kpi-value-sm">₦{{ "{:,.2f}".format(kpis.total_revenue) }}</div>
@@ -71,7 +182,7 @@
   </div>
 
   <!-- Forecast -->
-  <div class="card">
+  <div class="card brand-focus-target" id="brandForecast">
     <h4 style="color:var(--navy);margin-bottom:12px;">Predictive Analytics</h4>
     {% if forecast %}
     <div style="display:flex;flex-direction:column;gap:12px;">
@@ -170,7 +281,7 @@
     {% endif %}
   </div>
 
-  <div class="card">
+  <div class="card brand-focus-target" id="brandActivity">
     <div class="flex items-center justify-between" style="margin-bottom:12px;">
       <h4 style="color:var(--navy);">Activity Intelligence</h4>
       <a href="{{ url_for('activity_intelligence', brand=brand_name) }}" class="btn btn-outline btn-sm">Open Activity View</a>
@@ -403,5 +514,21 @@ async function loadRecommendations(regen = false) {
 }
 // Auto-load cached recommendations on page load
 loadRecommendations(false);
+
+const sectionTargets = {
+  overview: document.getElementById('brandOverview'),
+  forecast: document.getElementById('brandForecast'),
+  activity: document.getElementById('brandActivity')
+};
+
+const focusMode = {{ focus|tojson }};
+if (focusMode && focusMode !== 'overview' && sectionTargets[focusMode]) {
+  const target = sectionTargets[focusMode];
+  window.requestAnimationFrame(() => {
+    target.classList.add('is-focused');
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.setTimeout(() => target.classList.remove('is-focused'), 2600);
+  });
+}
 </script>
 {% endblock %}

@@ -1869,9 +1869,13 @@ def brand_detail(brand_name):
     latest = ds.get_latest_report()
     report_id = request.args.get('report_id', latest['id'] if latest else None, type=int)
     alert_count = ds.get_unacknowledged_count()
+    focus = (request.args.get('focus') or 'overview').strip().lower()
+    if focus not in {'overview', 'forecast', 'activity'}:
+        focus = 'overview'
 
     # Latest KPIs for this brand
     kpis = ds.get_brand_kpis_single(report_id, brand_name) if report_id else None
+    report = ds.get_report(report_id) if report_id else None
 
     # Historical trend
     history = ds.get_brand_history(brand_name, limit=12)
@@ -1907,6 +1911,13 @@ def brand_detail(brand_name):
     new_stores = [c for c in churn_data if c['churn_type'] == 'new']
     brand_activity = ds.get_activity_brand_summary(brand_name, limit=8)
 
+    trend_month_value = None
+    if report and report.get('start_date'):
+        try:
+            trend_month_value = datetime.strptime(report['start_date'], '%Y-%m-%d').strftime('%Y-%m')
+        except Exception:
+            trend_month_value = None
+
     return render_template('portal/brand_detail.html',
                            brand_name=brand_name,
                            kpis=kpis,
@@ -1918,13 +1929,15 @@ def brand_detail(brand_name):
                            token=token,
                            reports=ds.get_all_reports(),
                            report_id=report_id,
-                           report=ds.get_report(report_id) if report_id else None,
+                           report=report,
                            alert_count=alert_count,
                            yoy_kpi=yoy_kpi,
                            yoy_rev_pct=yoy_rev_pct,
                            churned_stores=churned_stores,
                            new_stores=new_stores,
-                           brand_activity=brand_activity)
+                           brand_activity=brand_activity,
+                           focus=focus,
+                           trend_month_value=trend_month_value)
 
 
 # ── History ───────────────────────────────────────────────────────────────────
