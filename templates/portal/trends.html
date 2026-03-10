@@ -10,6 +10,54 @@
     background: var(--white); padding: 16px 20px; border-radius: 10px;
     box-shadow: 0 2px 8px rgba(27,43,94,.07);
   }
+  .trend-controls {
+    background: var(--white); padding: 18px 20px; border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(27,43,94,.07); margin-bottom: 20px;
+  }
+  .trend-controls-form {
+    display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px;
+    align-items: end;
+  }
+  .control-group {
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .control-group label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .7px; color: var(--muted);
+  }
+  .control-group select {
+    padding: 10px 14px; border: 1.5px solid var(--gray); border-radius: 10px;
+    font-size: 13px; color: var(--text); background: var(--white);
+  }
+  .scope-banner {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 18px;
+    background:
+      radial-gradient(circle at top right, rgba(46,134,193,.12), transparent 32%),
+      linear-gradient(180deg, rgba(27,43,94,.03), rgba(27,43,94,0)),
+      var(--white);
+    border: 1px solid rgba(27,43,94,.08);
+    border-radius: 14px; padding: 22px 24px; margin-bottom: 24px;
+    box-shadow: 0 2px 10px rgba(27,43,94,.06);
+  }
+  .scope-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    border-radius: 999px; padding: 6px 12px; font-size: 11px; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .7px;
+    background: rgba(27,43,94,.08); color: var(--navy); margin-bottom: 10px;
+  }
+  .scope-heading {
+    font-size: 24px; font-weight: 800; color: var(--navy); margin-bottom: 8px;
+    line-height: 1.1;
+  }
+  .scope-subtitle {
+    font-size: 14px; line-height: 1.7; color: var(--text); max-width: 760px;
+  }
+  .focus-note {
+    min-width: 260px; max-width: 360px;
+    background: rgba(242,245,251,.85); border: 1px solid rgba(27,43,94,.07);
+    border-radius: 12px; padding: 14px 16px; font-size: 12px; line-height: 1.65;
+    color: var(--muted);
+  }
   .month-selector label {
     font-size: 12px; font-weight: 600; text-transform: uppercase;
     letter-spacing: .6px; color: var(--muted);
@@ -214,6 +262,7 @@
   }
 
   @media (max-width: 1200px) {
+    .trend-controls-form,
     .kpi-row,
     .insights-grid,
     .reorder-meta-grid {
@@ -222,11 +271,15 @@
   }
 
   @media (max-width: 900px) {
+    .trend-controls-form,
     .chart-grid,
     .kpi-row,
     .insights-grid,
     .reorder-meta-grid {
       grid-template-columns: 1fr;
+    }
+    .scope-banner {
+      flex-direction: column;
     }
     .reorder-hero {
       flex-direction: column;
@@ -237,19 +290,65 @@
 
 {% block content %}
 
-<!-- MONTH SELECTOR -->
+<!-- TREND CONTROLS -->
 {% if available_months %}
-<div class="month-selector">
-  <label>📅 Select Period</label>
-  <select id="monthSelect" onchange="loadMonthData()">
-    {% for m in available_months %}
-    <option value="{{ m.year }}-{{ m.month }}" {% if m.year == current_year and m.month == current_month %}selected{% endif %}>
-      {{ m.label }}
-    </option>
-    {% endfor %}
-  </select>
-  <span style="flex:1;"></span>
-  <span class="text-muted">Color Theme: <strong style="color: {{ color_scheme.primary }}">{{ color_scheme.name }}</strong></span>
+<div class="trend-controls">
+  <form id="trendFiltersForm" class="trend-controls-form" method="get" action="{{ url_for('trends') }}">
+    <div class="control-group">
+      <label>View</label>
+      <select id="scopeSelect" name="scope" onchange="handleScopeChange()">
+        <option value="portfolio" {% if scope == 'portfolio' %}selected{% endif %}>Portfolio</option>
+        <option value="brand" {% if scope == 'brand' %}selected{% endif %}>Brand Partner</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label>Brand Partner</label>
+      <select id="brandSelect" name="brand" onchange="submitTrendFilters()" {% if scope != 'brand' %}disabled{% endif %}>
+        <option value="">All brand partners</option>
+        {% for brand in available_brands %}
+        <option value="{{ brand }}" {% if brand == selected_brand %}selected{% endif %}>{{ brand }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label>Store Focus</label>
+      <select id="storeSelect" name="store" onchange="submitTrendFilters()">
+        <option value="">All stores</option>
+        {% for store in available_stores %}
+        <option value="{{ store }}" {% if store == selected_store %}selected{% endif %}>{{ store }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label>Period</label>
+      <select id="monthSelect" name="month" onchange="submitTrendFilters()">
+        {% for m in available_months %}
+        <option value="{{ m.year }}-{{ m.month }}" {% if m.year == current_year and m.month == current_month %}selected{% endif %}>
+          {{ m.label }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+  </form>
+</div>
+
+<div class="scope-banner">
+  <div>
+    <div class="scope-badge">{{ scope_badge }}</div>
+    <div class="scope-heading">{{ scope_title }}</div>
+    <div class="scope-subtitle">{{ scope_subtitle }}</div>
+  </div>
+  <div class="focus-note">
+    <strong style="display:block; color:var(--navy); margin-bottom:6px;">Current Focus</strong>
+    {{ focus_note }}
+    <div style="margin-top:10px;">
+      Color Theme:
+      <strong style="color: {{ color_scheme.primary }}">{{ color_scheme.name }}</strong>
+    </div>
+  </div>
 </div>
 {% endif %}
 
@@ -327,7 +426,7 @@
 <!-- CHARTS ROW 1 -->
 <div class="chart-grid">
   <div class="chart-card">
-    <div class="chart-title">🏪 Top Selling Supermarkets by Value</div>
+    <div class="chart-title">{{ top_stores_title }}</div>
     <div class="chart-container">
       <canvas class="chart-canvas" id="topStoresChart"></canvas>
     </div>
@@ -351,7 +450,7 @@
   </div>
   
   <div class="chart-card">
-    <div class="chart-title">🗺️ Top Repeat Purchase Stores Map</div>
+    <div class="chart-title">{{ secondary_panel_title }}</div>
     <div id="mapContainer">
       {% if google_maps_key %}
         <!-- Google Map will be rendered here -->
@@ -391,7 +490,7 @@
   <div class="chart-title">🔁 Reorder Momentum</div>
   <div class="reorder-hero">
     <div>
-      <div class="reorder-kicker">Portfolio Repeat Purchase Trend</div>
+      <div class="reorder-kicker">{{ reorder_kicker }}</div>
       <div class="reorder-headline" id="reorderHeadline">
         {{ metrics.repeat_rate }}% repeat rate in {{ metrics.month_label }}
       </div>
@@ -435,17 +534,21 @@
 
 <!-- REPEAT STORE LIST -->
 <div class="chart-card" style="margin-bottom:24px;">
-  <div class="chart-title">📍 Store Repeat Purchase Details</div>
+  <div class="chart-title">{{ detail_title }}</div>
   <div class="store-table">
-    {% for store in map_data[:15] %}
+    {% for row in detail_rows %}
     <div class="store-row">
       <div class="store-rank">{{ loop.index }}</div>
-      <div class="store-name">{{ store.store_name[:50] }}</div>
-      <div class="store-visits">{{ store.visit_count }} visits</div>
-      <div class="store-revenue">₦{{ store.total_revenue | money2 }}</div>
-      <span class="badge {% if store.repeat_category == 'Frequent (5+)' %}badge-red{% elif store.repeat_category == 'Regular (2-4)' %}badge-amber{% else %}badge-muted{% endif %}">
-        {{ store.repeat_category }}
+      <div class="store-name">{{ row.label[:70] }}</div>
+      <div class="store-visits">{{ row.meta }}</div>
+      <div class="store-revenue">₦{{ row.value | money2 }}</div>
+      <span class="badge {{ row.badge_class }}">
+        {{ row.badge }}
       </span>
+    </div>
+    {% else %}
+    <div style="padding:18px 6px; color:var(--muted); font-size:13px; line-height:1.6;">
+      {{ detail_empty_message }}
     </div>
     {% endfor %}
   </div>
@@ -589,8 +692,27 @@ function buildReorderTrendSummary() {
 }
 
 function loadMonthData() {
-  const selected = document.getElementById('monthSelect').value;
-  window.location.href = `/trends?month=${selected}`;
+  submitTrendFilters();
+}
+
+function submitTrendFilters() {
+  const form = document.getElementById('trendFiltersForm');
+  if (form) {
+    form.submit();
+  }
+}
+
+function handleScopeChange() {
+  const scopeSelect = document.getElementById('scopeSelect');
+  const brandSelect = document.getElementById('brandSelect');
+  const storeSelect = document.getElementById('storeSelect');
+  if (scopeSelect && scopeSelect.value !== 'brand' && brandSelect) {
+    brandSelect.value = '';
+  }
+  if (storeSelect) {
+    storeSelect.value = '';
+  }
+  submitTrendFilters();
 }
 
 // Initialize Google Map

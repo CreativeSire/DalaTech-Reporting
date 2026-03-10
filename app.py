@@ -52,7 +52,7 @@ from modules.activity_intelligence import load_activity_dataframe, build_activit
 from modules.agent_copilot    import build_default_agent_actions, answer_admin_query, execute_admin_request
 from modules.historical       import (
     get_brand_monthly_history, get_portfolio_monthly_trend,
-    get_repeat_purchase_map_data, generate_insights,
+    get_repeat_purchase_map_data, get_store_repeat_analysis, generate_insights,
     get_color_scheme_for_month, get_monthly_metrics
 )
 from modules.brand_names      import canonicalize_brand_name
@@ -1176,7 +1176,18 @@ def trends():
     Historical trend analysis dashboard with MoM growth,
     color themes, and insights.
     """
-    def render_trends_error(message, available_months=None, year=None, month=None):
+    def render_trends_error(message, available_months=None, year=None, month=None,
+                            scope='portfolio', scope_badge='Portfolio View',
+                            scope_title='Portfolio Trend Analysis',
+                            scope_subtitle='General view across all brand partners, stores, products, and reorder behaviour.',
+                            reorder_kicker='Portfolio Repeat Purchase Trend',
+                            available_brands=None, selected_brand='',
+                            available_stores=None, selected_store='',
+                            top_stores_title='🏪 Top Selling Supermarkets by Value',
+                            secondary_panel_title='🗺️ Top Repeat Purchase Stores Map',
+                            detail_title='📍 Store Repeat Purchase Details',
+                            detail_rows=None, detail_empty_message='No repeat purchase detail available for this view yet.',
+                            focus_note=''):
         now = datetime.now()
         selected_year = year or now.year
         selected_month = month or now.month
@@ -1194,6 +1205,21 @@ def trends():
             top_products_json='[]',
             map_data=[],
             map_data_json='[]',
+            scope=scope,
+            scope_badge=scope_badge,
+            scope_title=scope_title,
+            scope_subtitle=scope_subtitle,
+            reorder_kicker=reorder_kicker,
+            available_brands=available_brands or [],
+            selected_brand=selected_brand,
+            available_stores=available_stores or [],
+            selected_store=selected_store,
+            top_stores_title=top_stores_title,
+            secondary_panel_title=secondary_panel_title,
+            detail_title=detail_title,
+            detail_rows=detail_rows or [],
+            detail_empty_message=detail_empty_message,
+            focus_note=focus_note,
             color_scheme=get_color_scheme_for_month(selected_year, selected_month),
             available_months=available_months or [],
             current_year=selected_year,
@@ -1212,56 +1238,165 @@ def trends():
         df['Date'] = pd.to_datetime(df['Date'])
     except Exception as e:
         return render_trends_error(f"Error loading data: {e}")
-    
-    # Get available months
-    df['YearMonth'] = df['Date'].dt.to_period('M')
-    available_ym = sorted(df['YearMonth'].unique())
-    available_months = [{'year': ym.year, 'month': ym.month, 
-                        'label': ym.strftime('%b %Y')} for ym in available_ym]
-    
-    # Get selected month (default to latest)
-    month_param = request.args.get('month', '')
-    if month_param:
-        year, month = map(int, month_param.split('-'))
+
+    df['Brand Partner Canonical'] = (
+        df['Brand Partner']
+        .fillna('')
+        .astype(str)
+        .map(canonicalize_brand_name)
+    )
+
+    scope = (request.args.get('scope') or 'portfolio').strip().lower()
+    if scope not in {'portfolio', 'brand'}:
+        scope = 'portfolio'
+
+    sales_catalog_df = df[df['Vch Type'] == 'Sales'].copy()
+    available_brands = sorted(
+        {
+            brand.strip()
+            for brand in sales_catalog_df['Brand Partner Canonical'].dropna().tolist()
+            if str(brand).strip()
+        }
+    )
+    selected_brand = (request.args.get('brand') or '').strip()
+    if scope == 'brand' and available_brands:
+        if selected_brand not in available_brands:
+            selected_brand = available_brands[0]
     else:
-        year, month = available_ym[-1].year, available_ym[-1].month
-    
-    # Calculate metrics
-    metrics = get_monthly_metrics(df, year, month)
+        selected_brand = ''
+
+    if scope == 'brand' and selected_brand:
+        scoped_df = df[df['Brand Partner Canonical'] == selected_brand].copy()
+        scope_badge = 'Brand Partner View'
+        scope_title = f'{selected_brand} Trend Analysis'
+        scope_subtitle = (
+            'Brand-partner view across all stores, products, sales momentum, and reorder behaviour.'
+        )
+        reorder_kicker = f'{selected_brand} Repeat Purchase Trend'
+        top_stores_title = f'🏪 Top Selling Supermarkets for {selected_brand}'
+        secondary_panel_title = f'🗺️ Repeat Purchase Stores Map for {selected_brand}'
+        detail_title = f'📍 Store Repeat Purchase Details for {selected_brand}'
+    else:
+        scoped_df = df.copy()
+        scope_badge = 'Portfolio View'
+        scope_title = 'Portfolio Trend Analysis'
+        scope_subtitle = (
+            'General view across all brand partners, stores, products, and reorder behaviour.'
+        )
+        reorder_kicker = 'Portfolio Repeat Purchase Trend'
+        top_stores_title = '🏪 Top Selling Supermarkets by Value'
+        secondary_panel_title = '🗺️ Top Repeat Purchase Stores Map'
+        detail_title = '📍 Store Repeat Purchase Details'
+
+    scoped_sales_df = scoped_df[scoped_df['Vch Type'] == 'Sales'].copy()
+    if scoped_sales_df.empty:
+        return render_trends_error(
+            'No sales data is available for this view yet.',
+            scope=scope,
+            scope_badge=scope_badge,
+            scope_title=scope_title,
+            scope_subtitle=scope_subtitle,
+            reorder_kicker=reorder_kicker,
+            available_brands=available_brands,
+            selected_brand=selected_brand,
+            top_stores_title=top_stores_title,
+            secondary_panel_title=secondary_panel_title,
+            detail_title=detail_title,
+        )
+
+    scoped_sales_df['YearMonth'] = scoped_sales_df['Date'].dt.to_period('M')
+    available_ym = sorted(scoped_sales_df['YearMonth'].unique())
+    available_months = [
+        {'year': ym.year, 'month': ym.month, 'label': ym.strftime('%b %Y')}
+        for ym in available_ym
+    ]
+
+    month_param = request.args.get('month', '')
+    selected_period = None
+    if month_param:
+        try:
+            req_year, req_month = map(int, month_param.split('-'))
+            selected_period = pd.Period(year=req_year, month=req_month, freq='M')
+        except Exception:
+            selected_period = None
+    if selected_period not in set(available_ym):
+        selected_period = available_ym[-1]
+    year, month = selected_period.year, selected_period.month
+
+    historical = get_portfolio_monthly_trend(scoped_df)
+    metrics = next(
+        (row.copy() for row in historical if row.get('year') == year and row.get('month') == month),
+        None,
+    )
+    if not metrics:
+        metrics = get_monthly_metrics(scoped_df, year, month)
     if not metrics:
         return render_trends_error(
-            "No data for selected month",
+            'No data for selected month',
             available_months=available_months,
             year=year,
             month=month,
+            scope=scope,
+            scope_badge=scope_badge,
+            scope_title=scope_title,
+            scope_subtitle=scope_subtitle,
+            reorder_kicker=reorder_kicker,
+            available_brands=available_brands,
+            selected_brand=selected_brand,
+            top_stores_title=top_stores_title,
+            secondary_panel_title=secondary_panel_title,
+            detail_title=detail_title,
         )
-    
-    # Get historical data for sparklines
-    historical = get_portfolio_monthly_trend(df)
-    
-    # Get insights
+
     insights = generate_insights(historical)
-    
-    # Get color scheme
     color_scheme = get_color_scheme_for_month(year, month)
-    
-    # Get top stores for this month
-    sales_df = df[(df['Date'].dt.year == year) & (df['Date'].dt.month == month) & 
-                  (df['Vch Type'] == 'Sales')]
-    
+
+    sales_df = scoped_sales_df[
+        (scoped_sales_df['Date'].dt.year == year)
+        & (scoped_sales_df['Date'].dt.month == month)
+    ].copy()
+
+    store_repeat_df = get_store_repeat_analysis(scoped_df, year, month)
+    available_stores = sorted(
+        {
+            str(store).strip()
+            for store in store_repeat_df.get('store_name', pd.Series(dtype=str)).dropna().tolist()
+            if str(store).strip()
+        }
+    )
+    selected_store = (request.args.get('store') or '').strip()
+    if selected_store not in available_stores:
+        selected_store = ''
+
     top_stores = []
     if not sales_df.empty:
-        store_revenue = sales_df.groupby('Particulars')['Sales_Value'].sum().sort_values(ascending=False).head(10)
-        top_stores = [{'name': name, 'revenue': rev} for name, rev in store_revenue.items()]
-    
-    # Get top products
+        store_revenue = (
+            sales_df.groupby('Particulars')['Sales_Value']
+            .sum()
+            .sort_values(ascending=False)
+            .head(10)
+        )
+        top_stores = [
+            {'name': str(name), 'revenue': float(rev)}
+            for name, rev in store_revenue.items()
+        ]
+
     top_products = []
     if not sales_df.empty:
-        product_revenue = sales_df.groupby('SKUs')['Sales_Value'].sum().sort_values(ascending=False).head(10)
-        top_products = [{'name': name, 'revenue': rev} for name, rev in product_revenue.items()]
-    
-    # Get map data with geocoding
-    map_data = get_repeat_purchase_map_data(df, year, month, top_n=20)
+        product_revenue = (
+            sales_df.groupby('SKUs')['Sales_Value']
+            .sum()
+            .sort_values(ascending=False)
+            .head(10)
+        )
+        top_products = [
+            {'name': str(name), 'revenue': float(rev)}
+            for name, rev in product_revenue.items()
+        ]
+
+    map_data = get_repeat_purchase_map_data(scoped_df, year, month, top_n=20)
+    if selected_store:
+        map_data = [row for row in map_data if row.get('store_name') == selected_store]
     
     # Try to geocode store locations if API key is available
     google_maps_key = os.environ.get('GOOGLE_MAPS_API_KEY', '')
@@ -1274,10 +1409,61 @@ def trends():
                     m['latitude'] = coords[m['store_name']][0]
                     m['longitude'] = coords[m['store_name']][1]
         except Exception as e:
-            print(f"Geocoding error: {e}")
+                print(f"Geocoding error: {e}")
     
     # Filter to only stores with coordinates for the map
     map_data_with_coords = [m for m in map_data if m.get('latitude') and m.get('longitude')]
+
+    detail_source = store_repeat_df.copy()
+    if selected_store:
+        detail_source = detail_source[detail_source['store_name'] == selected_store]
+    else:
+        detail_source = detail_source.head(15)
+
+    detail_rows = [
+        {
+            'label': str(row['store_name']),
+            'meta': f"{int(row['visit_count'])} visits",
+            'value': float(row['total_revenue']),
+            'badge': str(row['repeat_category']),
+            'badge_class': (
+                'badge-red' if row['repeat_category'] == 'Frequent (5+)'
+                else 'badge-amber' if row['repeat_category'] == 'Regular (2-4)'
+                else 'badge-muted'
+            ),
+        }
+        for _, row in detail_source.iterrows()
+    ]
+
+    if selected_store:
+        if scope == 'brand' and selected_brand:
+            focus_note = (
+                f"Store focus is set to {selected_store} inside {selected_brand}. "
+                'The repeat-store map and detail list are narrowed to that supermarket.'
+            )
+            detail_empty_message = (
+                f'{selected_store} did not record repeat purchases for {selected_brand} in this period.'
+            )
+        else:
+            focus_note = (
+                f"Store focus is set to {selected_store}. "
+                'The repeat-store map and detail list are narrowed to that supermarket.'
+            )
+            detail_empty_message = (
+                f'{selected_store} did not record repeat purchases in this period.'
+            )
+    elif scope == 'brand' and selected_brand:
+        focus_note = (
+            f'Showing all stores that bought {selected_brand} in the selected month. '
+            'Use Store Focus when you want to zoom into one supermarket.'
+        )
+        detail_empty_message = f'No repeat-purchase store detail is available for {selected_brand} in this period.'
+    else:
+        focus_note = (
+            'Showing the general portfolio view across all brand partners. '
+            'Switch to a brand partner or apply Store Focus to drill down.'
+        )
+        detail_empty_message = 'No repeat-purchase store detail is available for this period.'
     
     # Helper to convert numpy types to native Python types for JSON
     def convert_to_native(obj):
@@ -1300,17 +1486,32 @@ def trends():
                            insights=insights,
                            historical=historical,
                            historical_json=json.dumps(historical_native),
-                           top_stores=top_stores,
-                           top_stores_json=json.dumps(top_stores),
-                           top_products=top_products,
-                           top_products_json=json.dumps(top_products),
-                           map_data=map_data,
-                           map_data_json=json.dumps(map_data_native),
-                           color_scheme=color_scheme,
-                           available_months=available_months,
-                           current_year=year,
-                           current_month=month,
-                           google_maps_key=google_maps_key,
+                            top_stores=top_stores,
+                            top_stores_json=json.dumps(top_stores),
+                            top_products=top_products,
+                            top_products_json=json.dumps(top_products),
+                            map_data=map_data if not selected_store else map_data_with_coords or map_data,
+                            map_data_json=json.dumps(map_data_native),
+                            scope=scope,
+                            scope_badge=scope_badge,
+                            scope_title=scope_title,
+                            scope_subtitle=scope_subtitle,
+                            reorder_kicker=reorder_kicker,
+                            available_brands=available_brands,
+                            selected_brand=selected_brand,
+                            available_stores=available_stores,
+                            selected_store=selected_store,
+                            top_stores_title=top_stores_title,
+                            secondary_panel_title=secondary_panel_title,
+                            detail_title=detail_title,
+                            detail_rows=detail_rows,
+                            detail_empty_message=detail_empty_message,
+                            focus_note=focus_note,
+                            color_scheme=color_scheme,
+                            available_months=available_months,
+                            current_year=year,
+                            current_month=month,
+                            google_maps_key=google_maps_key,
                            alert_count=ds.get_unacknowledged_count())
 
 

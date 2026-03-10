@@ -147,9 +147,13 @@ def get_portfolio_monthly_trend(df: pd.DataFrame) -> List[Dict]:
                 metrics['stores_mom'] = calculate_mom_growth(
                     metrics['unique_stores'], prev_metrics['unique_stores']
                 )
+                metrics['qty_mom'] = calculate_mom_growth(
+                    metrics['total_qty'], prev_metrics['total_qty']
+                )
             else:
                 metrics['revenue_mom'] = 0
                 metrics['stores_mom'] = 0
+                metrics['qty_mom'] = 0
             
             history.append(metrics)
             prev_metrics = metrics
