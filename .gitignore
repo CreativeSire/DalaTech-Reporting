@@ -47,6 +47,7 @@ service_account*.json
 # Logs / temp
 *.log
 *.tmp
+tmp/dala_data.brand_master_backup_*.db
 test_output*.txt
 ps_install_log.txt
 webapp_screenshot.png

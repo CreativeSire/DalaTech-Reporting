@@ -841,8 +841,15 @@ class DataStore:
 
     # ── Brand KPI operations ──────────────────────────────────────────────────
 
+    def normalize_brand_name(self, brand_name):
+        if brand_name is None:
+            return None
+        normalized = self.canonical_brand_name(brand_name)
+        return normalized or str(brand_name).strip()
+
     def save_brand_kpis(self, report_id, brand_name, kpis,
                         perf_score_dict=None, portfolio_share_pct=0):
+        brand_name = self.normalize_brand_name(brand_name)
         ps = perf_score_dict or {}
         peak_date_str = None
         if kpis.get('peak_date') is not None:
@@ -882,6 +889,7 @@ class DataStore:
 
     def save_daily_sales(self, report_id, brand_name, daily_sales_df):
         """Save daily_sales DataFrame rows for a brand."""
+        brand_name = self.normalize_brand_name(brand_name)
         rows = []
         for _, row in daily_sales_df.iterrows():
             rows.append((
@@ -899,6 +907,7 @@ class DataStore:
 
     def save_brand_detail_json(self, report_id, brand_name, kpis):
         """Persist the detailed DataFrames (stores, SKUs, inventory) as JSON."""
+        brand_name = self.normalize_brand_name(brand_name)
         def _df_json(df):
             if df is None or (hasattr(df, 'empty') and df.empty):
                 return '[]'
@@ -1285,6 +1294,7 @@ class DataStore:
     def save_forecast_result(self, report_id: int, brand_name: str, predicted_revenue: float,
                               growth_label: str, confidence: float):
         """Store a forecast prediction for later accuracy comparison."""
+        brand_name = self.normalize_brand_name(brand_name)
         now = datetime.now().isoformat(timespec='seconds')
         with self._connect() as conn:
             conn.execute(
@@ -1299,6 +1309,7 @@ class DataStore:
         Compare stored predictions against actuals.
         Returns list of {month_label, predicted, actual, error_pct}.
         """
+        brand_name = self.normalize_brand_name(brand_name)
         with self._connect() as conn:
             # For each forecast, look up the actual from the NEXT month's brand_kpis
             rows = conn.execute(
@@ -1342,6 +1353,7 @@ class DataStore:
 
     def save_store_churn(self, report_id: int, brand_name: str, churn_data: dict):
         """Persist churn data for a brand into the store_churn table."""
+        brand_name = self.normalize_brand_name(brand_name)
         now = datetime.now().isoformat(timespec='seconds')
         with self._connect() as conn:
             conn.execute("DELETE FROM store_churn WHERE report_id=? AND brand_name=?", (report_id, brand_name))
@@ -1358,6 +1370,8 @@ class DataStore:
 
     def get_store_churn(self, report_id: int, brand_name: str = None):
         """Return churn rows for a report, optionally filtered by brand."""
+        if brand_name:
+            brand_name = self.normalize_brand_name(brand_name)
         with self._connect() as conn:
             if brand_name:
                 rows = conn.execute(
@@ -1389,6 +1403,7 @@ class DataStore:
     # ── Alert operations ──────────────────────────────────────────────────────
 
     def save_alert(self, report_id, brand_name, alert_type, severity, message):
+        brand_name = self.normalize_brand_name(brand_name) if brand_name else brand_name
         now = datetime.now().isoformat(timespec='seconds')
         with self._connect() as conn:
             conn.execute(
@@ -1427,6 +1442,7 @@ class DataStore:
 
     def get_or_create_token(self, brand_name):
         """Return existing token or generate a new one for the brand."""
+        brand_name = self.normalize_brand_name(brand_name)
         self.ensure_brand_master(brand_name)
         with self._connect() as conn:
             row = conn.execute(
@@ -1456,6 +1472,7 @@ class DataStore:
             ).fetchall()]
 
     def update_brand_contact(self, brand_name, email=None, whatsapp=None):
+        brand_name = self.normalize_brand_name(brand_name)
         with self._connect() as conn:
             conn.execute(
                 "UPDATE brand_tokens SET email=?, whatsapp=? WHERE brand_name=?",
@@ -1474,12 +1491,14 @@ class DataStore:
                 )
 
     def revoke_token(self, brand_name):
+        brand_name = self.normalize_brand_name(brand_name)
         with self._connect() as conn:
             conn.execute(
                 "UPDATE brand_tokens SET active=0 WHERE brand_name=?", (brand_name,)
             )
 
     def regenerate_token(self, brand_name):
+        brand_name = self.normalize_brand_name(brand_name)
         token = uuid.uuid4().hex
         with self._connect() as conn:
             conn.execute(
@@ -2051,6 +2070,7 @@ class DataStore:
 
     def set_target(self, brand_name, month_label, target_revenue=0,
                    target_stores=0, target_repeat_pct=0, set_by='manual'):
+        brand_name = self.normalize_brand_name(brand_name)
         now = datetime.now().isoformat(timespec='seconds')
         with self._connect() as conn:
             conn.execute(
@@ -2068,6 +2088,7 @@ class DataStore:
             )
 
     def get_target(self, brand_name, month_label):
+        brand_name = self.normalize_brand_name(brand_name)
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT * FROM brand_targets WHERE brand_name=? AND month_label=?",
@@ -2125,6 +2146,7 @@ class DataStore:
     # ── Activity log operations ───────────────────────────────────────────────
 
     def log_activity(self, action, detail=None, brand_name=None, report_id=None):
+        brand_name = self.normalize_brand_name(brand_name) if brand_name else brand_name
         now = datetime.now().isoformat(timespec='seconds')
         with self._connect() as conn:
             conn.execute(
@@ -2133,6 +2155,8 @@ class DataStore:
             )
 
     def get_activity_log(self, limit=50, brand_name=None):
+        if brand_name:
+            brand_name = self.normalize_brand_name(brand_name)
         with self._connect() as conn:
             if brand_name:
                 return [dict(r) for r in conn.execute(
@@ -2848,6 +2872,7 @@ class DataStore:
 
     def save_recommendation_outcome(self, brand_name, recommendation_key, outcome_type,
                                     outcome_value=None, note=None, report_id=None):
+        brand_name = self.normalize_brand_name(brand_name)
         now = datetime.now().isoformat(timespec='seconds')
         with self._connect() as conn:
             conn.execute(
@@ -2861,6 +2886,7 @@ class DataStore:
         clauses = []
         params = []
         if brand_name:
+            brand_name = self.normalize_brand_name(brand_name)
             clauses.append("brand_name=?")
             params.append(brand_name)
         where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ''
@@ -3070,6 +3096,7 @@ class DataStore:
 
     def save_narrative(self, report_id, brand_name, narrative_text):
         """Cache an AI-generated narrative for a brand in a report."""
+        brand_name = self.normalize_brand_name(brand_name)
         now = datetime.now().isoformat(timespec='seconds')
         with self._connect() as conn:
             conn.execute(
@@ -3082,6 +3109,7 @@ class DataStore:
 
     def get_narrative(self, report_id, brand_name):
         """Return cached AI narrative for a brand, or None."""
+        brand_name = self.normalize_brand_name(brand_name)
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT narrative FROM ai_narratives WHERE report_id=? AND brand_name=?",
