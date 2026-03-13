@@ -1,0 +1,26 @@
+# Python caches and local tooling
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local/generated artifacts not needed at runtime
+tmp/
+output/
+test/
+logs*.csv
+*.log
+
+# Large source archives and extracted report workspaces
+Activity report/
+February Monthly Report/
+extracted_updated/
+*.pbix
+*.zip
+ORISIRISI FEBRUARY MONTHLY SALES REPORT.pdf
+
+# Local database should come from Railway volume mount
+dala_data.db
