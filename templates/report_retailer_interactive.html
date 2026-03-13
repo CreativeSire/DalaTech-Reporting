@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ detail.retailer_name }} Retailer Report</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root {
+      --navy:#1B2B5E;
+      --blue:#2E86C1;
+      --green:#1E8449;
+      --amber:#C0922A;
+      --red:#E8192C;
+      --muted:#7280a0;
+      --line:#dfe6f3;
+      --bg:#f5f7fc;
+      --white:#fff;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:"Segoe UI", Arial, sans-serif; background:var(--bg); color:#172033; }
+    .shell { max-width:1240px; margin:0 auto; padding:28px; }
+    .hero, .card { background:var(--white); border-radius:22px; box-shadow:0 20px 60px rgba(18,29,68,.08); }
+    .hero { padding:28px; margin-bottom:22px; display:flex; justify-content:space-between; gap:24px; flex-wrap:wrap; }
+    .eyebrow { color:var(--blue); font-size:12px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+    h1 { margin:8px 0 6px; color:var(--navy); font-size:34px; }
+    .muted { color:var(--muted); }
+    .grid-4 { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:18px; margin-bottom:22px; }
+    .grid-2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:22px; margin-bottom:22px; }
+    .card { padding:22px; }
+    .kpi-label { color:var(--muted); font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; }
+    .kpi-value { font-size:34px; font-weight:800; color:var(--navy); margin-top:10px; }
+    .signal { padding:12px 14px; border:1px solid var(--line); border-radius:14px; background:#fbfcff; margin-bottom:10px; }
+    .signal h4 { margin:0 0 4px; color:var(--navy); font-size:14px; }
+    .signal p { margin:0; color:var(--muted); font-size:13px; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { text-align:left; padding:12px 0; border-bottom:1px solid var(--line); font-size:13px; }
+    th { color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-size:11px; }
+    .badge { display:inline-flex; align-items:center; padding:6px 10px; border-radius:999px; font-size:11px; font-weight:700; }
+    .badge-red { background:#fdecee; color:var(--red); }
+    .badge-amber { background:#fff5db; color:var(--amber); }
+    .badge-muted { background:#eef2f8; color:var(--navy); }
+    .actions { margin:10px 0 0 18px; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div>
+        <div class="eyebrow">Retailer Intelligence Report</div>
+        <h1>{{ detail.retailer_name }}</h1>
+        <div class="muted">{{ detail.period_label }} · Generated {{ generated_at }}</div>
+        <div class="muted">{{ detail.profile.city or detail.activity.store.retailer_city or 'Unknown city' }}{% if detail.profile.state or detail.activity.store.retailer_state %}, {{ detail.profile.state or detail.activity.store.retailer_state }}{% endif %}</div>
+      </div>
+      <div style="max-width:420px;">
+        <div class="eyebrow">Coach View</div>
+        <div style="font-size:24px;font-weight:800;color:var(--navy);margin:10px 0 6px;">{{ detail.coach.summary.headline }}</div>
+        <div class="muted">{{ detail.coach.summary.summary }}</div>
+      </div>
+    </section>
+
+    <section class="grid-4">
+      <div class="card">
+        <div class="kpi-label">Retailer Revenue</div>
+        <div class="kpi-value">₦{{ detail.metrics.revenue | money2 }}</div>
+        <div class="muted">{{ detail.period_label }}</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">Brand Mix</div>
+        <div class="kpi-value">{{ detail.metrics.active_brands or 0 }}</div>
+        <div class="muted">{{ detail.metrics.unique_skus or 0 }} active SKUs</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">Transactions</div>
+        <div class="kpi-value">{{ detail.metrics.transactions or 0 }}</div>
+        <div class="muted">{{ detail.metrics.active_days or 0 }} active sales days</div>
+      </div>
+      <div class="card">
+        <div class="kpi-label">Repeat Depth</div>
+        <div class="kpi-value">{{ "{:,.1f}".format(detail.metrics.repeat_rate or 0) }}%</div>
+        <div class="muted">{{ detail.metrics.repeat_entities or 0 }} brands reordered</div>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="card">
+        <div class="eyebrow">Trend</div>
+        <canvas id="retailerChart" height="180"></canvas>
+      </div>
+      <div class="card">
+        <div class="eyebrow">Signals</div>
+        {% for signal in detail.coach.signals %}
+        <div class="signal">
+          <h4>{{ signal.evidence.title }}</h4>
+          <p>{{ signal.evidence.message }}</p>
+        </div>
+        {% else %}
+        <p class="muted">No open coach signal for this retailer.</p>
+        {% endfor %}
+        <div class="eyebrow" style="margin-top:16px;">Recommended actions</div>
+        <ul class="actions">
+          {% for action in detail.coach.summary.recommended_actions %}
+          <li>{{ action }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <div class="card">
+        <div class="eyebrow">Brands in Store</div>
+        <table>
+          <thead><tr><th>Brand</th><th>Revenue</th><th>MoM</th></tr></thead>
+          <tbody>
+            {% for row in detail.brand_rows %}
+            <tr>
+              <td>{{ row.brand_name }}</td>
+              <td>₦{{ row.revenue | money2 }}</td>
+              <td>{% if row.revenue_mom is not none %}{{ "%+.1f"|format(row.revenue_mom) }}%{% else %}N/A{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="eyebrow">Opportunity Brands</div>
+        <table>
+          <thead><tr><th>Brand</th><th>Portfolio Rank</th><th>Peer Demand</th></tr></thead>
+          <tbody>
+            {% for row in detail.opportunity_brands %}
+            <tr>
+              <td>{{ row.brand_name }}</td>
+              <td>{{ row.portfolio_rank or 'N/A' }}</td>
+              <td>₦{{ row.revenue | money2 }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3" class="muted">No assortment opportunity is open for this retailer.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const historyRows = {{ detail.historical|tojson }};
+    const canvas = document.getElementById('retailerChart');
+    if (canvas && historyRows.length) {
+      new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels: historyRows.map((row) => row.month_label),
+          datasets: [{
+            label: 'Revenue',
+            data: historyRows.map((row) => row.revenue || 0),
+            borderColor: '#1B2B5E',
+            backgroundColor: 'rgba(27,43,94,0.08)',
+            fill: true,
+            tension: 0.3,
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: {
+              ticks: {
+                callback: (value) => '₦' + Number(value || 0).toLocaleString()
+              }
+            }
+          }
+        }
+      });
+    }
+  </script>
+</body>
+</html>

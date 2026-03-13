@@ -50,6 +50,14 @@ from modules.predictor        import build_brand_forecasts, stock_depletion_date
 from modules.gmv              import build_gmv_window
 from modules.activity_intelligence import load_activity_dataframe, build_activity_payload
 from modules.agent_copilot    import build_default_agent_actions, answer_admin_query, execute_admin_request
+from modules.coach_features   import (
+    history_available as coach_history_available,
+    build_scope_snapshot,
+    build_retailer_index,
+    build_retailer_detail,
+    build_brand_coach_data,
+)
+from modules.coach_signals    import build_coach_payload
 from modules.historical       import (
     get_brand_monthly_history, get_portfolio_monthly_trend,
     get_repeat_purchase_map_data, get_store_repeat_analysis, generate_insights,
@@ -57,6 +65,7 @@ from modules.historical       import (
 )
 from modules.brand_names      import canonicalize_brand_name
 from modules.geocoding        import is_geocoding_available
+from modules.retailer_reports import render_retailer_html_report, render_retailer_pdf_report_html
 from modules.narrative_ai     import (
     generate_brand_narrative, generate_portfolio_narrative,
     generate_bulk_narratives, gemini_available
@@ -164,6 +173,32 @@ def _attach_reorder_trend(brand_name: str, kpis: dict | None,
         kpis=kpis,
     )
     return kpis
+
+
+def _coach_summary_for_snapshot(snapshot: dict | None, persist: bool = True) -> dict:
+    if not snapshot:
+        return {'summary': {'headline': 'Coach summary unavailable', 'summary': 'No data is available for this scope yet.', 'recommended_actions': [], 'used_gemini': False}, 'signals': []}
+    try:
+        payload = build_coach_payload(ds, snapshot, persist=persist, use_gemini=True)
+        ds.save_coach_run(
+            run_type='coach_summary',
+            scope_type=snapshot.get('scope_type') or 'portfolio',
+            scope_key=snapshot.get('scope_key') or 'global',
+            report_id=snapshot.get('report_id'),
+            result=payload,
+            status='completed',
+        )
+        return payload
+    except Exception as exc:
+        return {
+            'summary': {
+                'headline': 'Coach summary unavailable',
+                'summary': str(exc),
+                'recommended_actions': [],
+                'used_gemini': False,
+            },
+            'signals': [],
+        }
 
 
 def _compute_and_save_churn(report_id: int):
@@ -291,6 +326,9 @@ def _current_copilot_context(overrides=None):
         'brands': 'Brand Partners',
         'brand_detail': 'Brand 360',
         'brand_portal': 'Brand Portal',
+        'retailers': 'Retailers',
+        'retailer_detail': 'Retailer Intelligence',
+        'retailer_report_page': 'Retailer Report',
         'forecasting': 'Forecasting',
         'activity_intelligence': 'Activity',
         'store_360': 'Store 360',
@@ -322,8 +360,8 @@ def _agent_action_link(action):
         if report_id:
             return url_for('brand_detail', brand_name=subject_key, report_id=report_id)
         return url_for('brand_detail', brand_name=subject_key)
-    if subject_type == 'store' and subject_key:
-        return url_for('store_360', retailer_code=subject_key)
+    if subject_type in {'store', 'retailer'} and subject_key:
+        return url_for('retailer_detail', retailer_code=subject_key)
     if subject_type == 'catalog':
         return url_for('catalog')
     if subject_type == 'activity_batch':
@@ -1528,38 +1566,66 @@ def how_it_works():
 
 @app.route('/admin/retailers')
 def admin_retailers():
-    """Admin-only view of retailer counts per brand."""
-    # In production, add authentication check here
-    hist_path = os.path.join(BASE_DIR, '2024to2026salesreport.xlsx')
-    if not os.path.exists(hist_path):
-        return render_template('portal/admin_retailers.html',
-                               retailers=[],
-                               alert_count=ds.get_unacknowledged_count())
-    
-    df = pd.read_excel(hist_path)
-    df['Date'] = pd.to_datetime(df['Date'])
-    
-    # Get latest month's retailer counts per brand
-    latest_date = df['Date'].max()
-    latest_month = df[df['Date'].dt.to_period('M') == latest_date.to_period('M')]
-    sales_data = latest_month[latest_month['Vch Type'] == 'Sales']
-    
-    retailer_stats = []
-    for brand in sorted(sales_data['Brand Partner'].unique()):
-        brand_data = sales_data[sales_data['Brand Partner'] == brand]
-        stats = {
-            'brand': brand,
-            'store_count': brand_data['Particulars'].nunique(),
-            'sku_count': brand_data['SKUs'].nunique(),
-            'total_revenue': brand_data['Sales_Value'].sum(),
-            'last_order': brand_data['Date'].max().strftime('%Y-%m-%d'),
-            'status': 'Active' if len(brand_data) > 0 else 'Inactive'
-        }
-        retailer_stats.append(stats)
-    
-    return render_template('portal/admin_retailers.html',
-                           retailers=retailer_stats,
-                           alert_count=ds.get_unacknowledged_count())
+    return redirect(url_for('retailers'))
+
+
+@app.route('/retailers')
+def retailers():
+    alert_count = ds.get_unacknowledged_count()
+    report_id = request.args.get('report_id', type=int)
+    month_value = (request.args.get('month') or '').strip() or None
+    if not coach_history_available():
+        return render_template(
+            'portal/retailers.html',
+            alert_count=alert_count,
+            retailer_rows=[],
+            featured={},
+            period_label='',
+            available_months=[],
+            selected_month=month_value or '',
+            report=ds.get_report(report_id) if report_id else ds.get_latest_report(),
+            reports=ds.get_all_reports(),
+            error='Historical sales workbook is not available.',
+        )
+
+    dataset = build_retailer_index(ds, report_id=report_id, month_value=month_value)
+    retailer_rows = dataset.get('rows', [])
+    for row in retailer_rows:
+        tags = []
+        revenue_mom = row.get('revenue_mom')
+        if revenue_mom is not None and revenue_mom <= -12:
+            tags.append({'label': 'At Risk', 'class': 'badge-red'})
+        elif revenue_mom is not None and revenue_mom >= 15:
+            tags.append({'label': 'Accelerating', 'class': 'badge-green'})
+        if float(row.get('repeat_rate') or 0) < 30 and int(row.get('active_brands') or 0) >= 3:
+            tags.append({'label': 'Weak Reorder', 'class': 'badge-amber'})
+        if int(row.get('active_brands') or 0) <= 2:
+            tags.append({'label': 'Narrow Mix', 'class': 'badge-muted'})
+        row['tags'] = tags[:3]
+
+    featured = {
+        'risk': [row for row in retailer_rows if (row.get('revenue_mom') or 0) <= -12][:5],
+        'growth': [row for row in retailer_rows if (row.get('revenue_mom') or 0) >= 15][:5],
+        'opportunity': sorted(
+            retailer_rows,
+            key=lambda item: (-(item.get('active_brands') or 0), item.get('repeat_rate') or 0, -(item.get('total_revenue') or 0))
+        )[:5],
+    }
+    selected_month = month_value or ''
+    return render_template(
+        'portal/retailers.html',
+        alert_count=alert_count,
+        retailer_rows=retailer_rows,
+        featured=featured,
+        period_label=dataset.get('period_label'),
+        period_start=dataset.get('period_start'),
+        period_end=dataset.get('period_end'),
+        available_months=dataset.get('available_months', []),
+        selected_month=selected_month,
+        report=ds.get_report(dataset.get('report_id')) if dataset.get('report_id') else (ds.get_report(report_id) if report_id else ds.get_latest_report()),
+        reports=ds.get_all_reports(),
+        error=None,
+    )
 
 
 # ── Login / Logout ────────────────────────────────────────────────────────────
@@ -1917,6 +1983,13 @@ def brand_detail(brand_name):
             trend_month_value = datetime.strptime(report['start_date'], '%Y-%m-%d').strftime('%Y-%m')
         except Exception:
             trend_month_value = None
+    brand_coach_data = build_brand_coach_data(
+        ds,
+        brand_name,
+        report_id=report_id,
+        month_value=trend_month_value,
+    ) if coach_history_available() else {'snapshot': {}, 'top_risks': [], 'top_opportunities': [], 'activity_mismatches': []}
+    coach = _coach_summary_for_snapshot(brand_coach_data.get('snapshot'), persist=True) if brand_coach_data.get('snapshot') else {'summary': {'headline': 'Coach summary unavailable', 'summary': 'No historical context is available for this brand yet.', 'recommended_actions': [], 'used_gemini': False}, 'signals': []}
 
     return render_template('portal/brand_detail.html',
                            brand_name=brand_name,
@@ -1936,6 +2009,8 @@ def brand_detail(brand_name):
                            churned_stores=churned_stores,
                            new_stores=new_stores,
                            brand_activity=brand_activity,
+                           coach=coach,
+                           brand_coach_data=brand_coach_data,
                            focus=focus,
                            trend_month_value=trend_month_value)
 
@@ -2528,6 +2603,17 @@ def _build_brand_report_pdf_bytes(report_id: int, brand_name: str,
     return render_pdf_bytes(html)
 
 
+def _build_retailer_report_pdf_bytes(retailer_code: str, report_id: int | None = None,
+                                     month_value: str | None = None) -> tuple[bytes, dict]:
+    detail = build_retailer_detail(ds, retailer_code, report_id=report_id, month_value=month_value)
+    if not detail.get('period_start'):
+        raise ValueError(f'Retailer data not found for {retailer_code}')
+    coach = _coach_summary_for_snapshot(detail, persist=True)
+    detail['coach'] = coach
+    html = render_retailer_pdf_report_html(detail)
+    return render_pdf_bytes(html), detail
+
+
 _REPORT_DEPENDENCY_PATHS = [
     os.path.join(os.path.dirname(__file__), 'templates', 'report_template.html'),
     os.path.join(os.path.dirname(__file__), 'modules', 'pdf_generator_html.py'),
@@ -2719,6 +2805,42 @@ def api_report_html(report_id, brand_name):
         return jsonify({'error': str(e)}), 500
 
     return Response(html_content, mimetype='text/html')
+
+
+@app.route('/retailer/<path:retailer_code>/report')
+def retailer_report_page(retailer_code):
+    report_id = request.args.get('report_id', type=int)
+    month_value = (request.args.get('month') or '').strip() or None
+    detail = build_retailer_detail(ds, retailer_code, report_id=report_id, month_value=month_value)
+    if not detail.get('period_start'):
+        abort(404)
+    coach = _coach_summary_for_snapshot(detail, persist=True)
+    detail['coach'] = coach
+    html_content = render_retailer_html_report(detail)
+    return Response(html_content, mimetype='text/html')
+
+
+@app.route('/api/retailers/<path:retailer_code>/report_html')
+def api_retailer_report_html(retailer_code):
+    report_id = request.args.get('report_id', type=int)
+    month_value = (request.args.get('month') or '').strip() or None
+    detail = build_retailer_detail(ds, retailer_code, report_id=report_id, month_value=month_value)
+    if not detail.get('period_start'):
+        abort(404)
+    coach = _coach_summary_for_snapshot(detail, persist=True)
+    detail['coach'] = coach
+    return Response(render_retailer_html_report(detail), mimetype='text/html')
+
+
+@app.route('/api/retailers/<path:retailer_code>/report_pdf')
+def api_retailer_report_pdf(retailer_code):
+    report_id = request.args.get('report_id', type=int)
+    month_value = (request.args.get('month') or '').strip() or None
+    pdf_bytes, detail = _build_retailer_report_pdf_bytes(retailer_code, report_id=report_id, month_value=month_value)
+    month_tag = detail.get('period_label') or 'Retailer'
+    safe = _safe_name(detail.get('retailer_name') or retailer_code)
+    filename = f"{safe}_Retailer_Report_{month_tag.replace(' ', '_')}.pdf"
+    return send_file(io.BytesIO(pdf_bytes), as_attachment=True, download_name=filename, mimetype='application/pdf')
 
 
 @app.route('/files')
@@ -3170,18 +3292,32 @@ def activity_intelligence():
     )
 
 
-@app.route('/store-360/<path:retailer_code>')
-def store_360(retailer_code):
+@app.route('/retailer/<path:retailer_code>')
+def retailer_detail(retailer_code):
     alert_count = ds.get_unacknowledged_count()
-    summary = ds.get_store_activity_summary(retailer_code)
-    if not summary.get('store'):
+    report_id = request.args.get('report_id', type=int)
+    month_value = (request.args.get('month') or '').strip() or None
+    if not coach_history_available():
         abort(404)
+    detail = build_retailer_detail(ds, retailer_code, report_id=report_id, month_value=month_value)
+    if not detail.get('period_start'):
+        abort(404)
+    coach = _coach_summary_for_snapshot(detail, persist=True)
     return render_template(
         'portal/store_360.html',
         alert_count=alert_count,
         retailer_code=retailer_code,
-        summary=summary,
+        detail=detail,
+        coach=coach,
+        report=ds.get_report(detail.get('report_id')) if detail.get('report_id') else (ds.get_report(report_id) if report_id else ds.get_latest_report()),
+        reports=ds.get_all_reports(),
+        selected_month=month_value or '',
     )
+
+
+@app.route('/store-360/<path:retailer_code>')
+def store_360(retailer_code):
+    return redirect(url_for('retailer_detail', retailer_code=retailer_code, **request.args.to_dict()))
 
 
 @app.route('/copilot')
@@ -3423,6 +3559,78 @@ def api_activity_brand_summary(brand_name):
 @app.route('/api/activity/store/<path:retailer_code>')
 def api_activity_store_summary(retailer_code):
     return jsonify(ds.get_store_activity_summary(retailer_code))
+
+
+@app.route('/api/retailers')
+def api_retailers():
+    report_id = request.args.get('report_id', type=int)
+    month_value = (request.args.get('month') or '').strip() or None
+    dataset = build_retailer_index(ds, report_id=report_id, month_value=month_value)
+    return jsonify({'success': True, **dataset})
+
+
+@app.route('/api/retailers/<path:retailer_code>')
+def api_retailer_detail(retailer_code):
+    report_id = request.args.get('report_id', type=int)
+    month_value = (request.args.get('month') or '').strip() or None
+    detail = build_retailer_detail(ds, retailer_code, report_id=report_id, month_value=month_value)
+    if not detail.get('period_start'):
+        return jsonify({'success': False, 'error': 'Retailer not found'}), 404
+    coach = _coach_summary_for_snapshot(detail, persist=True)
+    return jsonify({'success': True, 'detail': detail, 'coach': coach})
+
+
+@app.route('/api/retailers/<path:retailer_code>/brands')
+def api_retailer_brands(retailer_code):
+    report_id = request.args.get('report_id', type=int)
+    month_value = (request.args.get('month') or '').strip() or None
+    detail = build_retailer_detail(ds, retailer_code, report_id=report_id, month_value=month_value)
+    if not detail.get('period_start'):
+        return jsonify({'success': False, 'error': 'Retailer not found'}), 404
+    return jsonify({'success': True, 'brands': detail.get('brand_rows', [])})
+
+
+@app.route('/api/coach/signals')
+def api_coach_signals():
+    scope_type = (request.args.get('scope_type') or '').strip() or None
+    scope_key = (request.args.get('scope_key') or '').strip() or None
+    status = (request.args.get('status') or 'open').strip().lower()
+    signal_type = (request.args.get('signal_type') or '').strip() or None
+    signals = ds.list_coach_signals(scope_type=scope_type, scope_key=scope_key, status=status, signal_type=signal_type, limit=min(int(request.args.get('limit', 25)), 100))
+    return jsonify({'success': True, 'signals': signals})
+
+
+@app.route('/api/coach/entity')
+def api_coach_entity():
+    scope_type = (request.args.get('scope_type') or 'portfolio').strip().lower()
+    scope_key = (request.args.get('scope_key') or '').strip() or None
+    report_id = request.args.get('report_id', type=int)
+    month_value = (request.args.get('month') or '').strip() or None
+    retailer_code = (request.args.get('retailer_code') or '').strip() or None
+    if scope_type == 'retailer' and not scope_key:
+        scope_key = retailer_code
+    snapshot = build_scope_snapshot(ds, scope_type, scope_key=scope_key, report_id=report_id, month_value=month_value, retailer_code=retailer_code, persist=True)
+    coach = _coach_summary_for_snapshot(snapshot, persist=True)
+    return jsonify({'success': True, 'snapshot': snapshot, 'coach': coach})
+
+
+@app.route('/api/coach/summary')
+def api_coach_summary():
+    scope_type = (request.args.get('scope_type') or 'portfolio').strip().lower()
+    scope_key = (request.args.get('scope_key') or '').strip() or None
+    report_id = request.args.get('report_id', type=int)
+    month_value = (request.args.get('month') or '').strip() or None
+    retailer_code = (request.args.get('retailer_code') or '').strip() or None
+    if scope_type == 'retailer' and not scope_key:
+        scope_key = retailer_code
+    snapshot = build_scope_snapshot(ds, scope_type, scope_key=scope_key, report_id=report_id, month_value=month_value, retailer_code=retailer_code, persist=True)
+    coach = _coach_summary_for_snapshot(snapshot, persist=True)
+    return jsonify({'success': True, 'summary': coach.get('summary'), 'signals': coach.get('signals', []), 'snapshot_meta': {
+        'scope_type': snapshot.get('scope_type'),
+        'scope_key': snapshot.get('scope_key'),
+        'period_label': snapshot.get('period_label'),
+        'report_id': snapshot.get('report_id'),
+    }})
 
 
 @app.route('/api/copilot/state')

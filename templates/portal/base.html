@@ -271,6 +271,9 @@
     <a href="/brands" class="nav-link {% if request.endpoint=='brands' %}active{% endif %}">
       <span class="nav-icon">🏢</span> Brand Partners
     </a>
+    <a href="/retailers" class="nav-link {% if request.endpoint in ['retailers','retailer_detail','store_360','retailer_report_page'] %}active{% endif %}">
+      <span class="nav-icon">🛒</span> Retailers
+    </a>
 
     <div class="nav-section">Intelligence</div>
     <a href="/forecasting" class="nav-link {% if request.endpoint=='forecasting' %}active{% endif %}">

@@ -789,8 +789,14 @@ def _tool_registry():
         'open_page': {'category': 'navigation'},
         'summarize_report': {'category': 'analysis'},
         'summarize_brand': {'category': 'analysis'},
+        'summarize_retailer': {'category': 'analysis'},
+        'summarize_brand_retailer': {'category': 'analysis'},
         'summarize_activity': {'category': 'analysis'},
         'summarize_forecast': {'category': 'analysis'},
+        'list_coach_signals': {'category': 'analysis'},
+        'compare_retailers': {'category': 'analysis'},
+        'generate_retailer_report': {'category': 'analysis'},
+        'recommend_next_actions': {'category': 'analysis'},
         'list_actions': {'category': 'analysis'},
         'search_memory': {'category': 'analysis'},
         'list_memory': {'category': 'analysis'},
@@ -1144,6 +1150,36 @@ def execute_admin_tool(ds, tool_name: str, arguments=None, context=None,
             kpis = ds.get_brand_kpis_single(report['id'], brand_name)
             activity = ds.get_activity_brand_summary(brand_name)
             result = _tool_response(message='Brand summary ready.', data={'brand_name': brand_name, 'kpis': kpis or {}, 'activity': activity or {}})
+    elif tool_name == 'summarize_retailer':
+        from .coach_features import build_retailer_detail
+        from .coach_signals import build_coach_payload
+
+        retailer_code = arguments.get('retailer_code') or context.get('retailer_code')
+        if not retailer_code:
+            result = _tool_response(status='error', message='retailer_code is required.')
+        else:
+            detail = build_retailer_detail(ds, retailer_code, report_id=(report or {}).get('id'))
+            coach = build_coach_payload(ds, detail, persist=True, use_gemini=True)
+            result = _tool_response(message='Retailer summary ready.', data={'detail': detail, 'coach': coach})
+    elif tool_name == 'summarize_brand_retailer':
+        from .coach_features import build_scope_snapshot
+        from .coach_signals import build_coach_payload
+
+        brand_name = arguments.get('brand_name') or context.get('brand_name')
+        retailer_code = arguments.get('retailer_code') or context.get('retailer_code')
+        if not brand_name or not retailer_code:
+            result = _tool_response(status='error', message='brand_name and retailer_code are required.')
+        else:
+            snapshot = build_scope_snapshot(
+                ds,
+                'brand_retailer',
+                scope_key=brand_name,
+                retailer_code=retailer_code,
+                report_id=(report or {}).get('id'),
+                persist=True,
+            )
+            coach = build_coach_payload(ds, snapshot, persist=True, use_gemini=True)
+            result = _tool_response(message='Brand-retailer summary ready.', data={'snapshot': snapshot, 'coach': coach})
     elif tool_name == 'summarize_activity':
         result = _tool_response(
             message='Activity summary ready.',
@@ -1155,6 +1191,90 @@ def execute_admin_tool(ds, tool_name: str, arguments=None, context=None,
         )
     elif tool_name == 'summarize_forecast':
         result = _tool_response(message='Forecast summary ready.', data=context.get('forecasting') or {})
+    elif tool_name == 'list_coach_signals':
+        scope_type = arguments.get('scope_type')
+        scope_key = arguments.get('scope_key')
+        if context.get('retailer_code') and not scope_type:
+            scope_type = 'retailer'
+            scope_key = context.get('retailer_code')
+        elif context.get('brand_name') and not scope_type:
+            scope_type = 'brand'
+            scope_key = context.get('brand_name')
+        result = _tool_response(
+            message='Coach signals loaded.',
+            data={'signals': ds.list_coach_signals(
+                scope_type=scope_type,
+                scope_key=scope_key,
+                status=arguments.get('status', 'open'),
+                signal_type=arguments.get('signal_type'),
+                limit=int(arguments.get('limit') or 12),
+            )}
+        )
+    elif tool_name == 'compare_retailers':
+        from .coach_features import build_retailer_detail
+
+        retailers = arguments.get('retailers') or []
+        if not retailers:
+            left = arguments.get('left') or context.get('retailer_code')
+            right = arguments.get('right')
+            retailers = [item for item in [left, right] if item]
+        details = [build_retailer_detail(ds, retailer, report_id=(report or {}).get('id')) for retailer in retailers[:3]]
+        comparisons = [
+            {
+                'retailer_code': item.get('retailer_code'),
+                'retailer_name': item.get('retailer_name'),
+                'revenue': float((item.get('metrics') or {}).get('revenue') or 0),
+                'repeat_rate': float((item.get('metrics') or {}).get('repeat_rate') or 0),
+                'active_brands': int((item.get('metrics') or {}).get('active_brands') or 0),
+            }
+            for item in details if item.get('period_start')
+        ]
+        result = _tool_response(message='Retailer comparison ready.', data={'comparisons': comparisons})
+    elif tool_name == 'generate_retailer_report':
+        retailer_code = arguments.get('retailer_code') or context.get('retailer_code')
+        if not retailer_code:
+            result = _tool_response(status='error', message='retailer_code is required.')
+        else:
+            report_id = (report or {}).get('id')
+            html_url = f"/api/retailers/{retailer_code}/report_html"
+            pdf_url = f"/api/retailers/{retailer_code}/report_pdf"
+            if report_id:
+                html_url += f"?report_id={report_id}"
+                pdf_url += f"?report_id={report_id}"
+            result = _tool_response(
+                message='Retailer report links ready.',
+                artifacts=[
+                    {'kind': 'link', 'label': 'Retailer HTML Report', 'url': html_url},
+                    {'kind': 'link', 'label': 'Retailer PDF Report', 'url': pdf_url},
+                ],
+                data={'html_url': html_url, 'pdf_url': pdf_url},
+            )
+    elif tool_name == 'recommend_next_actions':
+        from .coach_features import build_scope_snapshot
+        from .coach_signals import build_coach_payload
+
+        if context.get('retailer_code'):
+            scope_type = 'retailer'
+            scope_key = context.get('retailer_code')
+            retailer_code = context.get('retailer_code')
+        elif context.get('brand_name'):
+            scope_type = 'brand'
+            scope_key = context.get('brand_name')
+            retailer_code = None
+        else:
+            scope_type = 'portfolio'
+            scope_key = 'global'
+            retailer_code = None
+        snapshot = build_scope_snapshot(
+            ds,
+            scope_type,
+            scope_key=scope_key,
+            retailer_code=retailer_code,
+            report_id=(report or {}).get('id'),
+            persist=True,
+        )
+        coach = build_coach_payload(ds, snapshot, persist=True, use_gemini=True)
+        result = _tool_response(message='Recommended actions ready.', data=coach)
     elif tool_name == 'list_actions':
         result = _tool_response(message='Pending actions loaded.', data={'actions': ds.list_agent_actions(status=arguments.get('status', 'pending'), limit=int(arguments.get('limit') or 25))})
     elif tool_name == 'search_memory':
@@ -1373,6 +1493,18 @@ def _guess_tool_from_question(question: str, context: dict):
         return 'reject_action'
     if any(term in q for term in ('memory', 'remember', 'recall', 'pinned')):
         return 'search_memory'
+    if any(term in q for term in ('coach', 'signal', 'next action', 'recommendation')):
+        if 'signal' in q:
+            return 'list_coach_signals'
+        return 'recommend_next_actions'
+    if any(term in q for term in ('retailer', 'store', 'supermarket')):
+        if any(term in q for term in ('compare', 'versus', 'vs')):
+            return 'compare_retailers'
+        if any(term in q for term in ('report', 'pdf', 'html')):
+            return 'generate_retailer_report'
+        if context.get('brand_name') and context.get('retailer_code'):
+            return 'summarize_brand_retailer'
+        return 'summarize_retailer'
     if any(term in q for term in ('schedule', 'cadence', 'run now', 'pause job', 'resume job')):
         if any(term in q for term in ('run now', 'run immediately')):
             return 'run_schedule_now'

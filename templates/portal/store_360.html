@@ -1,73 +1,248 @@
 {% extends "portal/base.html" %}
-{% block title %}Store 360 — DALA Analytics{% endblock %}
-{% block page_title %}Store 360{% endblock %}
+{% block title %}Retailer Intelligence - DALA Analytics{% endblock %}
+{% block page_title %}Retailer Intelligence{% endblock %}
+
+{% block head_extra %}
+<style>
+  .retailer-shell { display:flex; flex-direction:column; gap:20px; }
+  .retailer-hero { display:flex; justify-content:space-between; gap:20px; flex-wrap:wrap; align-items:flex-start; }
+  .retailer-hero h3 { margin-bottom:6px; color:var(--navy); }
+  .retailer-hero .meta { color:var(--muted); font-size:13px; }
+  .coach-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  .signal-list { display:flex; flex-direction:column; gap:10px; }
+  .signal-item { padding:12px 14px; border-radius:12px; border:1px solid rgba(27,43,94,.08); background:#f8faff; }
+  .signal-item h5 { margin:0 0 4px 0; color:var(--navy); font-size:14px; }
+  .signal-item p { margin:0; color:var(--muted); font-size:13px; }
+  .retailer-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:20px; }
+  .mini-table { width:100%; border-collapse:collapse; }
+  .mini-table td, .mini-table th { padding:10px 0; border-bottom:1px solid var(--gray); font-size:13px; text-align:left; }
+  .opportunity-list { display:flex; flex-direction:column; gap:10px; }
+  .opportunity-item { display:flex; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--gray); }
+  .coach-evidence { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+</style>
+{% endblock %}
 
 {% block topbar_actions %}
-<span class="text-muted fs-sm">{{ retailer_code }}</span>
+<a class="btn btn-outline btn-sm" target="_blank" href="{{ url_for('api_retailer_report_html', retailer_code=retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open Report</a>
+<a class="btn btn-primary btn-sm" href="{{ url_for('api_retailer_report_pdf', retailer_code=retailer_code, month=selected_month, report_id=report.id if report else None) }}">Download PDF</a>
 {% endblock %}
 
 {% block content %}
-{% if not summary.store %}
-<div class="card"><p class="text-muted">No store activity found.</p></div>
+{% if not detail %}
+<div class="card"><p class="text-muted">No retailer intelligence is available for this store yet.</p></div>
 {% else %}
-<div class="grid-3 mb-3">
-  <div class="kpi-card blue">
-    <div class="kpi-label">Store</div>
-    <div class="kpi-value-sm">{{ summary.store.retailer_name }}</div>
-    <div class="kpi-sub">{{ summary.store.retailer_city }}, {{ summary.store.retailer_state }}</div>
-  </div>
-  <div class="kpi-card red">
-    <div class="kpi-label">Active Days</div>
-    <div class="kpi-value">{{ summary.store.active_days or 0 }}</div>
-    <div class="kpi-sub">{{ summary.store.events or 0 }} responses logged</div>
-  </div>
-  <div class="kpi-card green">
-    <div class="kpi-label">Salespeople</div>
-    <div class="kpi-value">{{ summary.store.salespeople or 0 }}</div>
-    <div class="kpi-sub">Distinct SEs logged</div>
-  </div>
-</div>
-
-<div class="grid-2">
+<div class="retailer-shell">
   <div class="card">
-    <h3 class="text-navy fw-bold mb-2">Recent Visits</h3>
-    {% for visit in summary.visits %}
-    <div style="padding:12px 0;border-bottom:1px solid var(--gray);">
-      <div class="fw-bold">{{ visit.activity_date }}</div>
-      <div class="fs-sm text-muted">{{ visit.salesman_name or 'Unknown SE' }} · {{ visit.survey_name or 'No survey name' }}</div>
-      <div class="fs-sm mt-1">{{ visit.event_count }} responses · {{ visit.issue_count }} issues · {{ visit.opportunity_count }} opportunities</div>
+    <div class="retailer-hero">
+      <div>
+        <h3>{{ detail.retailer_name }}</h3>
+        <div class="meta">{{ detail.profile.city or detail.activity.store.retailer_city or 'Unknown city' }}{% if detail.profile.state or detail.activity.store.retailer_state %}, {{ detail.profile.state or detail.activity.store.retailer_state }}{% endif %}</div>
+        <div class="meta">{{ detail.period_label }}{% if detail.report_id %} · Report {{ detail.report_id }}{% endif %}</div>
+      </div>
+      <div class="coach-actions">
+        <a class="btn btn-outline btn-sm" href="{{ url_for('retailers', month=selected_month, report_id=report.id if report else None) }}">Back to Retailers</a>
+        <a class="btn btn-outline btn-sm" href="{{ url_for('api_coach_summary', scope_type='retailer', scope_key=retailer_code, month=selected_month, report_id=report.id if report else None) }}" target="_blank">Coach API</a>
+      </div>
     </div>
-    {% else %}
-    <p class="text-muted fs-sm">No visits found.</p>
-    {% endfor %}
   </div>
-  <div class="card">
-    <h3 class="text-navy fw-bold mb-2">Brand Mentions</h3>
-    {% for brand in summary.brands %}
-    <div class="row"><span>{{ brand.brand_name }}</span><strong>{{ brand.mentions }}</strong></div>
-    {% else %}
-    <p class="text-muted fs-sm">No brand mentions found.</p>
-    {% endfor %}
-  </div>
-</div>
 
-<div class="card mt-3">
-  <h3 class="text-navy fw-bold mb-2">Issue Log</h3>
-  <table class="data-table">
-    <thead><tr><th>Date</th><th>Brand</th><th>Issue</th><th>Detail</th></tr></thead>
-    <tbody>
-      {% for issue in summary.issues %}
-      <tr>
-        <td>{{ issue.activity_date }}</td>
-        <td>{{ issue.brand_name or 'Unmatched' }}</td>
-        <td>{{ issue.issue_type|replace('_', ' ')|title }}</td>
-        <td>{{ issue.answer or issue.label or issue.question }}</td>
-      </tr>
+  <div class="grid-4">
+    <div class="kpi-card blue">
+      <div class="kpi-label">Retailer Revenue</div>
+      <div class="kpi-value-sm">₦{{ "{:,.2f}".format(detail.metrics.revenue or 0) }}</div>
+      <div class="kpi-sub">{{ detail.period_label }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Brand Mix</div>
+      <div class="kpi-value-sm">{{ detail.metrics.active_brands or 0 }}</div>
+      <div class="kpi-sub">{{ detail.metrics.unique_skus or 0 }} SKUs active</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-label">Transactions</div>
+      <div class="kpi-value-sm">{{ detail.metrics.transactions or 0 }}</div>
+      <div class="kpi-sub">{{ detail.metrics.active_days or 0 }} active sales days</div>
+    </div>
+    <div class="kpi-card red">
+      <div class="kpi-label">Repeat Depth</div>
+      <div class="kpi-value-sm">{{ "{:,.1f}".format(detail.metrics.repeat_rate or 0) }}%</div>
+      <div class="kpi-sub">{{ detail.metrics.repeat_entities or 0 }} repeat brands in-store</div>
+    </div>
+  </div>
+
+  <div class="retailer-grid">
+    <div class="card">
+      <h4 class="text-navy fw-bold mb-2">{{ coach.summary.headline }}</h4>
+      <p class="text-muted fs-sm">{{ coach.summary.summary }}</p>
+      <div class="coach-evidence">
+        {% for signal in coach.signals[:4] %}
+        <span class="badge {% if signal.severity == 'critical' or signal.severity == 'high' %}badge-red{% elif signal.severity == 'medium' %}badge-amber{% else %}badge-muted{% endif %}">{{ signal.signal_type|replace('_', ' ')|title }}</span>
+        {% endfor %}
+      </div>
+      <div style="margin-top:14px;">
+        <div class="kpi-label">Recommended next actions</div>
+        <ul class="fs-sm text-muted" style="margin:8px 0 0 18px;">
+          {% for action in coach.summary.recommended_actions %}
+          <li>{{ action }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <h4 class="text-navy fw-bold mb-2">Retailer Revenue Trend</h4>
+      {% if detail.historical %}
+      <canvas id="retailerHistoryChart" height="180"></canvas>
       {% else %}
-      <tr><td colspan="4" class="text-muted">No issues logged for this store.</td></tr>
+      <p class="text-muted fs-sm">Historical retailer trend will appear once more periods are available.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="retailer-grid">
+    <div class="card">
+      <h4 class="text-navy fw-bold mb-2">Open Signals</h4>
+      <div class="signal-list">
+        {% for signal in coach.signals %}
+        <div class="signal-item">
+          <h5>{{ signal.evidence.title }}</h5>
+          <p>{{ signal.evidence.message }}</p>
+        </div>
+        {% else %}
+        <p class="text-muted fs-sm">No open coach signals for this retailer.</p>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="card">
+      <h4 class="text-navy fw-bold mb-2">Opportunity Brands</h4>
+      <div class="opportunity-list">
+        {% for item in detail.opportunity_brands %}
+        <div class="opportunity-item">
+          <div>
+            <div class="fw-bold">{{ item.brand_name }}</div>
+            <div class="meta">Portfolio rank {{ item.portfolio_rank or 'N/A' }} · {{ item.transactions }} transactions in peer demand</div>
+          </div>
+          <div class="fw-bold">₦{{ "{:,.2f}".format(item.revenue or 0) }}</div>
+        </div>
+        {% else %}
+        <p class="text-muted fs-sm">No assortment gaps are visible for this retailer right now.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="retailer-grid">
+    <div class="card">
+      <h4 class="text-navy fw-bold mb-2">Brands in Store</h4>
+      <table class="mini-table">
+        <thead>
+          <tr><th>Brand</th><th>Revenue</th><th>MoM</th></tr>
+        </thead>
+        <tbody>
+          {% for row in detail.brand_rows %}
+          <tr>
+            <td>
+              <div class="fw-bold">{{ row.brand_name }}</div>
+              <div class="meta">{{ row.transactions }} transactions · {{ row.unique_skus }} SKUs</div>
+            </td>
+            <td>₦{{ "{:,.2f}".format(row.revenue or 0) }}</td>
+            <td>
+              {% if row.revenue_mom is not none %}
+              <span class="{% if row.revenue_mom >= 0 %}text-green{% else %}text-red{% endif %}">{{ "%+.1f"|format(row.revenue_mom) }}%</span>
+              {% else %}
+              <span class="text-muted">N/A</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3" class="text-muted">No brand mix data for this retailer.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h4 class="text-navy fw-bold mb-2">Top SKUs</h4>
+      <table class="mini-table">
+        <thead>
+          <tr><th>SKU</th><th>Revenue</th><th>Qty</th></tr>
+        </thead>
+        <tbody>
+          {% for row in detail.top_products %}
+          <tr>
+            <td>{{ row.sku }}</td>
+            <td>₦{{ "{:,.2f}".format(row.revenue or 0) }}</td>
+            <td>{{ "{:,.1f}".format(row.quantity or 0) }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3" class="text-muted">No SKU data for this retailer.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="retailer-grid">
+    <div class="card">
+      <h4 class="text-navy fw-bold mb-2">Recent Visits</h4>
+      {% for visit in detail.activity.visits %}
+      <div style="padding:10px 0;border-bottom:1px solid var(--gray);">
+        <div class="fw-bold">{{ visit.activity_date }}</div>
+        <div class="meta">{{ visit.salesman_name or 'Unknown SE' }} · {{ visit.event_count }} responses · {{ visit.issue_count }} issues</div>
+      </div>
+      {% else %}
+      <p class="text-muted fs-sm">No activity visits are linked to this retailer yet.</p>
       {% endfor %}
-    </tbody>
-  </table>
+    </div>
+
+    <div class="card">
+      <h4 class="text-navy fw-bold mb-2">Issue Log</h4>
+      {% for issue in detail.activity.issues[:12] %}
+      <div style="padding:10px 0;border-bottom:1px solid var(--gray);">
+        <div class="fw-bold">{{ issue.issue_type|replace('_', ' ')|title }}</div>
+        <div class="meta">{{ issue.activity_date }} · {{ issue.brand_name or 'Unmatched' }}</div>
+        <div class="fs-sm text-muted">{{ issue.answer or issue.label or issue.question }}</div>
+      </div>
+      {% else %}
+      <p class="text-muted fs-sm">No issues have been recorded for this retailer.</p>
+      {% endfor %}
+    </div>
+  </div>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const retailerHistory = {{ detail.historical|tojson if detail else '[]' }};
+  const retailerCtx = document.getElementById('retailerHistoryChart');
+  if (retailerCtx && window.Chart && retailerHistory.length) {
+    new Chart(retailerCtx, {
+      type: 'line',
+      data: {
+        labels: retailerHistory.map((row) => row.month_label),
+        datasets: [{
+          label: 'Revenue',
+          data: retailerHistory.map((row) => row.revenue || 0),
+          borderColor: '#1B2B5E',
+          backgroundColor: 'rgba(27,43,94,0.08)',
+          fill: true,
+          tension: 0.32,
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: {
+            ticks: {
+              callback: (value) => '₦' + Number(value || 0).toLocaleString()
+            }
+          }
+        }
+      }
+    });
+  }
+</script>
 {% endblock %}

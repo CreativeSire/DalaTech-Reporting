@@ -128,6 +128,67 @@
   </div>
 </div>
 
+<div class="grid-2" style="margin-bottom:20px;">
+  <div class="card">
+    <div class="flex items-center justify-between" style="margin-bottom:12px;">
+      <h4 style="color:var(--navy);">Coach Summary</h4>
+      <span class="badge badge-muted">{{ coach.signals|length }} open signals</span>
+    </div>
+    <div class="fw-bold" style="color:var(--navy);margin-bottom:8px;">{{ coach.summary.headline }}</div>
+    <p class="text-muted fs-sm" style="margin-bottom:10px;">{{ coach.summary.summary }}</p>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+      {% for signal in coach.signals[:4] %}
+      <span class="badge {% if signal.severity == 'critical' or signal.severity == 'high' %}badge-red{% elif signal.severity == 'medium' %}badge-amber{% else %}badge-muted{% endif %}">{{ signal.signal_type|replace('_', ' ')|title }}</span>
+      {% endfor %}
+    </div>
+    <div class="kpi-label" style="margin-bottom:6px;">Next actions</div>
+    <ul class="fs-sm text-muted" style="margin:0 0 0 18px;">
+      {% for action in coach.summary.recommended_actions %}
+      <li>{{ action }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div class="card">
+    <h4 style="color:var(--navy);margin-bottom:12px;">Retailer Intelligence for {{ brand_name }}</h4>
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;">
+      <div>
+        <div class="kpi-label" style="margin-bottom:8px;">At-Risk Retailers</div>
+        {% for row in brand_coach_data.top_risks %}
+        <div style="padding:8px 0;border-bottom:1px solid var(--gray);">
+          <div class="fw-bold">{{ row.retailer_name }}</div>
+          <div class="fs-sm text-muted">{{ "%+.1f"|format(row.revenue_mom or 0) }}% · ₦{{ row.revenue | money2 }}</div>
+        </div>
+        {% else %}
+        <p class="text-muted fs-sm">No retailer is flagged as deteriorating for this brand.</p>
+        {% endfor %}
+      </div>
+      <div>
+        <div class="kpi-label" style="margin-bottom:8px;">Growth Retailers</div>
+        {% for row in brand_coach_data.top_opportunities %}
+        <div style="padding:8px 0;border-bottom:1px solid var(--gray);">
+          <div class="fw-bold">{{ row.retailer_name }}</div>
+          <div class="fs-sm text-muted">{{ "%+.1f"|format(row.revenue_mom or 0) }}% · ₦{{ row.revenue | money2 }}</div>
+        </div>
+        {% else %}
+        <p class="text-muted fs-sm">No retailer is showing strong growth for this brand yet.</p>
+        {% endfor %}
+      </div>
+      <div>
+        <div class="kpi-label" style="margin-bottom:8px;">Activity Mismatches</div>
+        {% for row in brand_coach_data.activity_mismatches %}
+        <div style="padding:8px 0;border-bottom:1px solid var(--gray);">
+          <div class="fw-bold">{{ row.retailer_name }}</div>
+          <div class="fs-sm text-muted">{{ row.mentions }} field mentions without current sales visibility.</div>
+        </div>
+        {% else %}
+        <p class="text-muted fs-sm">No clear activity-to-sales mismatch is open for this brand.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- KPI CARDS -->
 <div class="grid-4 brand-focus-target" id="brandOverview" style="margin-bottom:20px;">
   <div class="kpi-card red">

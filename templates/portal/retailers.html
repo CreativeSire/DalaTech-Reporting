@@ -1,0 +1,204 @@
+{% extends "portal/base.html" %}
+{% block title %}Retailers - DALA Analytics{% endblock %}
+{% block page_title %}Retailer Intelligence{% endblock %}
+
+{% block head_extra %}
+<style>
+  .retailer-toolbar { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:18px; }
+  .retailer-toolbar form { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  .retailer-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:18px; margin-bottom:20px; }
+  .retailer-feature-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px; margin-bottom:20px; }
+  .retailer-feature-list { display:flex; flex-direction:column; gap:10px; }
+  .retailer-feature-item { display:flex; justify-content:space-between; gap:10px; padding:12px 0; border-bottom:1px solid var(--gray); }
+  .retailer-meta { font-size:12px; color:var(--muted); }
+  .retailer-table-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .retailer-tag-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+  .retailer-search { min-width:240px; }
+</style>
+{% endblock %}
+
+{% block topbar_actions %}
+{% if report %}
+<span class="text-muted fs-sm">{{ period_label or report.month_label }}</span>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+{% if error %}
+<div class="card">
+  <h3 class="text-navy fw-bold">Retailer Intelligence Unavailable</h3>
+  <p class="text-muted">{{ error }}</p>
+</div>
+{% else %}
+{% set total_revenue = retailer_rows|sum(attribute='total_revenue') %}
+{% set avg_repeat = (retailer_rows|sum(attribute='repeat_rate') / (retailer_rows|length or 1)) if retailer_rows else 0 %}
+{% set avg_brands = (retailer_rows|sum(attribute='active_brands') / (retailer_rows|length or 1)) if retailer_rows else 0 %}
+
+<div class="card" style="margin-bottom:20px;">
+  <div class="retailer-toolbar">
+    <div>
+      <h3 class="text-navy fw-bold mb-1">Retailer Command Surface</h3>
+      <p class="text-muted fs-sm mb-0">Use this page for supermarket-level intelligence: sales, coverage, reorder depth, and coach signals.</p>
+    </div>
+    <form method="get" action="{{ url_for('retailers') }}">
+      {% if report %}
+      <input type="hidden" name="report_id" value="{{ report.id }}">
+      {% endif %}
+      <input id="retailerSearch" class="form-control retailer-search" type="search" placeholder="Search retailer" autocomplete="off">
+      <select class="form-control" name="month" onchange="this.form.submit()">
+        <option value="">Latest period</option>
+        {% for item in available_months %}
+        <option value="{{ item.value }}" {% if selected_month == item.value %}selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </div>
+</div>
+
+<div class="retailer-kpis">
+  <div class="kpi-card blue">
+    <div class="kpi-label">Retailers in View</div>
+    <div class="kpi-value-sm">{{ retailer_rows|length }}</div>
+    <div class="kpi-sub">{{ period_label }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Total Retailer Revenue</div>
+    <div class="kpi-value-sm">₦{{ "{:,.2f}".format(total_revenue) }}</div>
+    <div class="kpi-sub">Sales value across the visible retailers</div>
+  </div>
+  <div class="kpi-card green">
+    <div class="kpi-label">Average Brand Mix</div>
+    <div class="kpi-value-sm">{{ "{:,.1f}".format(avg_brands) }}</div>
+    <div class="kpi-sub">Active brands per retailer</div>
+  </div>
+  <div class="kpi-card red">
+    <div class="kpi-label">Average Repeat Depth</div>
+    <div class="kpi-value-sm">{{ "{:,.1f}".format(avg_repeat) }}%</div>
+    <div class="kpi-sub">Brand-level repeat rate inside retailers</div>
+  </div>
+</div>
+
+<div class="retailer-feature-grid">
+  <div class="card">
+    <h4 class="text-navy fw-bold mb-2">Retailers Under Pressure</h4>
+    <div class="retailer-feature-list">
+      {% for item in featured.risk %}
+      <div class="retailer-feature-item">
+        <div>
+          <div class="fw-bold">{{ item.retailer_name }}</div>
+          <div class="retailer-meta">Revenue {{ "%+.1f"|format(item.revenue_mom or 0) }}% vs prior period</div>
+        </div>
+        <a class="btn btn-outline btn-sm" href="{{ url_for('retailer_detail', retailer_code=item.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open</a>
+      </div>
+      {% else %}
+      <p class="text-muted fs-sm">No retailer is currently flagged as deteriorating.</p>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card">
+    <h4 class="text-navy fw-bold mb-2">Retailers Accelerating</h4>
+    <div class="retailer-feature-list">
+      {% for item in featured.growth %}
+      <div class="retailer-feature-item">
+        <div>
+          <div class="fw-bold">{{ item.retailer_name }}</div>
+          <div class="retailer-meta">Revenue {{ "%+.1f"|format(item.revenue_mom or 0) }}% with {{ item.active_brands }} brands active</div>
+        </div>
+        <a class="btn btn-outline btn-sm" href="{{ url_for('retailer_detail', retailer_code=item.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open</a>
+      </div>
+      {% else %}
+      <p class="text-muted fs-sm">No retailer is currently flagged as accelerating.</p>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="card">
+    <h4 class="text-navy fw-bold mb-2">Assortment Opportunity</h4>
+    <div class="retailer-feature-list">
+      {% for item in featured.opportunity %}
+      <div class="retailer-feature-item">
+        <div>
+          <div class="fw-bold">{{ item.retailer_name }}</div>
+          <div class="retailer-meta">{{ item.active_brands }} active brands · {{ "{:,.1f}".format(item.repeat_rate or 0) }}% repeat depth</div>
+        </div>
+        <a class="btn btn-outline btn-sm" href="{{ url_for('retailer_detail', retailer_code=item.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open</a>
+      </div>
+      {% else %}
+      <p class="text-muted fs-sm">Opportunity signals will appear once the sales workbook is available.</p>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+    <div>
+      <h4 class="text-navy fw-bold mb-1">Retailer Ranking</h4>
+      <p class="text-muted fs-sm mb-0">The list below is the retailer-level operating view for the selected period.</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table" id="retailerTable">
+      <thead>
+        <tr>
+          <th>Retailer</th>
+          <th>Revenue</th>
+          <th>MoM</th>
+          <th>Brands</th>
+          <th>Transactions</th>
+          <th>Repeat</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in retailer_rows %}
+        <tr data-retailer="{{ row.retailer_name|lower }}">
+          <td>
+            <div class="fw-bold">{{ row.retailer_name }}</div>
+            <div class="retailer-meta">{{ row.city or 'Unknown city' }}{% if row.state %}, {{ row.state }}{% endif %}</div>
+            <div class="retailer-tag-row">
+              {% for tag in row.tags %}
+              <span class="badge {{ tag.class }}">{{ tag.label }}</span>
+              {% endfor %}
+            </div>
+          </td>
+          <td>₦{{ "{:,.2f}".format(row.total_revenue) }}</td>
+          <td>
+            {% if row.revenue_mom is not none %}
+            <span class="{% if row.revenue_mom >= 0 %}text-green{% else %}text-red{% endif %}">{{ "%+.1f"|format(row.revenue_mom) }}%</span>
+            {% else %}
+            <span class="text-muted">N/A</span>
+            {% endif %}
+          </td>
+          <td>{{ row.active_brands }}</td>
+          <td>{{ row.transactions }}</td>
+          <td>{{ "{:,.1f}".format(row.repeat_rate) }}%</td>
+          <td>
+            <div class="retailer-table-actions">
+              <a class="btn btn-outline btn-sm" href="{{ url_for('retailer_detail', retailer_code=row.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open</a>
+              <a class="btn btn-outline btn-sm" target="_blank" href="{{ url_for('api_retailer_report_html', retailer_code=row.retailer_code, month=selected_month, report_id=report.id if report else None) }}">HTML</a>
+              <a class="btn btn-primary btn-sm" href="{{ url_for('api_retailer_report_pdf', retailer_code=row.retailer_code, month=selected_month, report_id=report.id if report else None) }}">PDF</a>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-muted">No retailer rows are available for this view.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const retailerSearch = document.getElementById('retailerSearch');
+  retailerSearch?.addEventListener('input', () => {
+    const needle = retailerSearch.value.trim().toLowerCase();
+    document.querySelectorAll('#retailerTable tbody tr').forEach((row) => {
+      const haystack = row.getAttribute('data-retailer') || '';
+      row.style.display = !needle || haystack.includes(needle) ? '' : 'none';
+    });
+  });
+</script>
+{% endblock %}

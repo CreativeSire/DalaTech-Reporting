@@ -597,6 +597,79 @@ class DataStore:
                     FOREIGN KEY (report_id) REFERENCES reports(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS coach_feature_snapshots (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    scope_type   TEXT NOT NULL,
+                    scope_key    TEXT NOT NULL,
+                    period_type  TEXT NOT NULL,
+                    period_start TEXT NOT NULL,
+                    period_end   TEXT NOT NULL,
+                    report_id    INTEGER,
+                    feature_json TEXT NOT NULL DEFAULT '{}',
+                    created_at   TEXT NOT NULL,
+                    updated_at   TEXT NOT NULL,
+                    UNIQUE(scope_type, scope_key, period_type, period_start, period_end),
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS coach_signals (
+                    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+                    scope_type               TEXT NOT NULL,
+                    scope_key                TEXT NOT NULL,
+                    signal_type              TEXT NOT NULL,
+                    severity                 TEXT DEFAULT 'medium',
+                    confidence               REAL DEFAULT 0.5,
+                    period_type              TEXT NOT NULL,
+                    period_start             TEXT NOT NULL,
+                    period_end               TEXT NOT NULL,
+                    report_id                INTEGER,
+                    evidence_json            TEXT NOT NULL DEFAULT '{}',
+                    recommended_actions_json TEXT NOT NULL DEFAULT '[]',
+                    status                   TEXT DEFAULT 'open',
+                    created_at               TEXT NOT NULL,
+                    updated_at               TEXT NOT NULL,
+                    UNIQUE(scope_type, scope_key, signal_type, period_type, period_start, period_end),
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS retailer_profiles (
+                    retailer_code TEXT PRIMARY KEY,
+                    retailer_name TEXT,
+                    state         TEXT,
+                    city          TEXT,
+                    first_seen    TEXT,
+                    last_seen     TEXT,
+                    active_status TEXT DEFAULT 'active',
+                    profile_json  TEXT NOT NULL DEFAULT '{}',
+                    updated_at    TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS retailer_brand_metrics (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    retailer_code TEXT NOT NULL,
+                    brand_name     TEXT NOT NULL,
+                    period_type    TEXT NOT NULL,
+                    period_start   TEXT NOT NULL,
+                    period_end     TEXT NOT NULL,
+                    report_id      INTEGER,
+                    metrics_json   TEXT NOT NULL DEFAULT '{}',
+                    created_at     TEXT NOT NULL,
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS coach_runs (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_type   TEXT NOT NULL,
+                    scope_type TEXT NOT NULL,
+                    scope_key  TEXT NOT NULL,
+                    report_id  INTEGER,
+                    status     TEXT DEFAULT 'completed',
+                    result_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (report_id) REFERENCES reports(id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_forecast_brand ON brand_forecast_history(brand_name);
                 CREATE INDEX IF NOT EXISTS idx_churn_report ON store_churn(report_id, brand_name);
                 CREATE INDEX IF NOT EXISTS idx_activity_batch_created ON activity_batches(created_at DESC);
@@ -608,6 +681,9 @@ class DataStore:
                 CREATE INDEX IF NOT EXISTS idx_agent_actions_status ON agent_actions(status, priority, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_agent_subject ON agent_actions(subject_type, subject_key);
                 CREATE INDEX IF NOT EXISTS idx_agent_memories_scope ON agent_memories(scope_type, scope_key, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_coach_snapshots_scope ON coach_feature_snapshots(scope_type, scope_key, period_type, period_start DESC);
+                CREATE INDEX IF NOT EXISTS idx_coach_signals_scope ON coach_signals(scope_type, scope_key, status, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_retailer_brand_metrics_scope ON retailer_brand_metrics(retailer_code, brand_name, period_type, period_start DESC);
             """)
             # ── Schema migration: add report_type to existing databases ──────
             existing = [r[1] for r in conn.execute("PRAGMA table_info(reports)").fetchall()]
@@ -2504,49 +2580,389 @@ class DataStore:
             'latest_visit': dict(latest_visit) if latest_visit else None,
         }
 
-    def get_store_activity_summary(self, retailer_code):
+    def get_retailer_activity_summary(self, retailer_code, report_id=None, limit=20):
+        retailer_code = str(retailer_code or '').strip()
+        if not retailer_code:
+            return {
+                'store': None,
+                'visits': [],
+                'issues': [],
+                'brands': [],
+                'totals': {'events': 0, 'active_days': 0, 'salespeople': 0, 'visits': 0, 'issues': 0, 'brand_mentions': 0},
+                'visit_count': 0,
+                'issue_count': 0,
+                'brand_mentions': 0,
+            }
+
+        report_filter = ''
+        report_params = []
+        if report_id:
+            report_filter = ' AND report_id=?'
+            report_params.append(report_id)
+
+        match_params = (retailer_code, retailer_code, *report_params)
         with self._connect() as conn:
             totals = conn.execute(
-                """SELECT retailer_name, retailer_state, retailer_city,
-                          COUNT(*) AS events,
-                          COUNT(DISTINCT activity_date) AS active_days,
-                          COUNT(DISTINCT salesman_name) AS salespeople
-                   FROM activity_events
-                   WHERE retailer_code=?
-                   GROUP BY retailer_name, retailer_state, retailer_city
-                   ORDER BY activity_date DESC
-                   LIMIT 1""",
-                (retailer_code,)
+                f"""SELECT retailer_name, retailer_state, retailer_city,
+                           COUNT(*) AS events,
+                           COUNT(DISTINCT activity_date) AS active_days,
+                           COUNT(DISTINCT salesman_name) AS salespeople
+                    FROM activity_events
+                    WHERE (retailer_code=? OR retailer_name=?){report_filter}
+                    GROUP BY retailer_name, retailer_state, retailer_city
+                    ORDER BY activity_date DESC
+                    LIMIT 1""",
+                match_params
             ).fetchone()
             visits = conn.execute(
-                """SELECT * FROM activity_visits
-                   WHERE retailer_code=?
-                   ORDER BY activity_date DESC, id DESC
-                   LIMIT 20""",
-                (retailer_code,)
+                f"""SELECT * FROM activity_visits
+                    WHERE (retailer_code=? OR retailer_name=?){report_filter}
+                    ORDER BY activity_date DESC, id DESC
+                    LIMIT ?""",
+                (*match_params, limit)
             ).fetchall()
             issues = conn.execute(
-                """SELECT * FROM activity_issues
-                   WHERE retailer_code=?
-                   ORDER BY activity_date DESC, id DESC
-                   LIMIT 20""",
-                (retailer_code,)
+                f"""SELECT * FROM activity_issues
+                    WHERE (retailer_code=? OR retailer_name=?){report_filter}
+                    ORDER BY activity_date DESC, id DESC
+                    LIMIT ?""",
+                (*match_params, limit)
             ).fetchall()
             brands = conn.execute(
-                """SELECT COALESCE(brand_name, 'Unmatched') AS brand_name, COUNT(*) AS mentions
-                   FROM activity_brand_mentions
-                   WHERE retailer_code=?
-                   GROUP BY COALESCE(brand_name, 'Unmatched')
-                   ORDER BY mentions DESC, brand_name
-                   LIMIT 20""",
-                (retailer_code,)
+                f"""SELECT COALESCE(brand_name, 'Unmatched') AS brand_name, COUNT(*) AS mentions
+                    FROM activity_brand_mentions
+                    WHERE (retailer_code=? OR retailer_name=?){report_filter}
+                    GROUP BY COALESCE(brand_name, 'Unmatched')
+                    ORDER BY mentions DESC, brand_name
+                    LIMIT ?""",
+                (*match_params, limit)
             ).fetchall()
+
+        visit_count = len(visits)
+        issue_count = len(issues)
+        brand_mentions = int(sum(int(row['mentions'] or 0) for row in brands))
         return {
             'store': dict(totals) if totals else None,
             'visits': [dict(r) for r in visits],
             'issues': [dict(r) for r in issues],
             'brands': [dict(r) for r in brands],
+            'totals': {
+                'events': int((totals['events'] if totals else 0) or 0),
+                'active_days': int((totals['active_days'] if totals else 0) or 0),
+                'salespeople': int((totals['salespeople'] if totals else 0) or 0),
+                'visits': visit_count,
+                'issues': issue_count,
+                'brand_mentions': brand_mentions,
+            },
+            'visit_count': visit_count,
+            'issue_count': issue_count,
+            'brand_mentions': brand_mentions,
         }
+
+    def get_store_activity_summary(self, retailer_code):
+        return self.get_retailer_activity_summary(retailer_code)
+
+    def _hydrate_coach_feature_snapshot(self, row):
+        item = dict(row)
+        item['features'] = self._safe_json_loads(item.get('feature_json') or '{}', {})
+        return item
+
+    def _hydrate_coach_signal(self, row):
+        item = dict(row)
+        item['evidence'] = self._safe_json_loads(item.get('evidence_json') or '{}', {})
+        item['recommended_actions'] = self._safe_json_loads(item.get('recommended_actions_json') or '[]', [])
+        return item
+
+    def save_coach_feature_snapshot(self, scope_type, scope_key, period_type,
+                                    period_start, period_end, feature_data,
+                                    report_id=None):
+        now = datetime.now().isoformat(timespec='seconds')
+        feature_json = json.dumps(feature_data or {}, default=str)
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO coach_feature_snapshots
+                   (scope_type, scope_key, period_type, period_start, period_end,
+                    report_id, feature_json, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(scope_type, scope_key, period_type, period_start, period_end)
+                   DO UPDATE SET
+                     report_id=excluded.report_id,
+                     feature_json=excluded.feature_json,
+                     updated_at=excluded.updated_at""",
+                (
+                    scope_type,
+                    scope_key,
+                    period_type,
+                    period_start,
+                    period_end,
+                    report_id,
+                    feature_json,
+                    now,
+                    now,
+                )
+            )
+        return self.get_coach_feature_snapshot(scope_type, scope_key, period_type, period_start, period_end)
+
+    def get_coach_feature_snapshot(self, scope_type, scope_key, period_type, period_start, period_end):
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT * FROM coach_feature_snapshots
+                   WHERE scope_type=? AND scope_key=? AND period_type=? AND period_start=? AND period_end=?""",
+                (scope_type, scope_key, period_type, period_start, period_end)
+            ).fetchone()
+        return self._hydrate_coach_feature_snapshot(row) if row else None
+
+    def list_coach_feature_snapshots(self, scope_type=None, scope_key=None, period_type=None, limit=24):
+        clauses = []
+        params = []
+        if scope_type:
+            clauses.append("scope_type=?")
+            params.append(scope_type)
+        if scope_key:
+            clauses.append("scope_key=?")
+            params.append(scope_key)
+        if period_type:
+            clauses.append("period_type=?")
+            params.append(period_type)
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ''
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT * FROM coach_feature_snapshots
+                    {where_clause}
+                    ORDER BY period_start DESC, updated_at DESC
+                    LIMIT ?""",
+                (*params, limit)
+            ).fetchall()
+        return [self._hydrate_coach_feature_snapshot(row) for row in rows]
+
+    def save_coach_signal(self, scope_type, scope_key, signal_type, severity='medium',
+                          confidence=0.5, period_type='monthly', period_start=None,
+                          period_end=None, evidence=None, recommended_actions=None,
+                          report_id=None, status='open'):
+        now = datetime.now().isoformat(timespec='seconds')
+        with self._connect() as conn:
+            cur = conn.execute(
+                """INSERT INTO coach_signals
+                   (scope_type, scope_key, signal_type, severity, confidence,
+                    period_type, period_start, period_end, report_id,
+                    evidence_json, recommended_actions_json, status, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(scope_type, scope_key, signal_type, period_type, period_start, period_end)
+                   DO UPDATE SET
+                     severity=excluded.severity,
+                     confidence=excluded.confidence,
+                     report_id=excluded.report_id,
+                     evidence_json=excluded.evidence_json,
+                     recommended_actions_json=excluded.recommended_actions_json,
+                     status=excluded.status,
+                     updated_at=excluded.updated_at""",
+                (
+                    scope_type,
+                    scope_key,
+                    signal_type,
+                    severity,
+                    float(confidence or 0),
+                    period_type,
+                    period_start,
+                    period_end,
+                    report_id,
+                    json.dumps(evidence or {}, default=str),
+                    json.dumps(recommended_actions or [], default=str),
+                    status,
+                    now,
+                    now,
+                )
+            )
+            signal_id = cur.lastrowid
+            if not signal_id:
+                row = conn.execute(
+                    """SELECT id FROM coach_signals
+                       WHERE scope_type=? AND scope_key=? AND signal_type=? AND period_type=? AND period_start=? AND period_end=?""",
+                    (scope_type, scope_key, signal_type, period_type, period_start, period_end)
+                ).fetchone()
+                signal_id = row['id'] if row else None
+        return self.get_coach_signal(signal_id) if signal_id else None
+
+    def get_coach_signal(self, signal_id):
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM coach_signals WHERE id=?", (signal_id,)).fetchone()
+        return self._hydrate_coach_signal(row) if row else None
+
+    def list_coach_signals(self, scope_type=None, scope_key=None, status='open',
+                           signal_type=None, limit=25):
+        clauses = []
+        params = []
+        if scope_type:
+            clauses.append("scope_type=?")
+            params.append(scope_type)
+        if scope_key:
+            clauses.append("scope_key=?")
+            params.append(scope_key)
+        if status and status != 'all':
+            clauses.append("status=?")
+            params.append(status)
+        if signal_type:
+            clauses.append("signal_type=?")
+            params.append(signal_type)
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ''
+        severity_order = (
+            "CASE severity "
+            "WHEN 'critical' THEN 0 "
+            "WHEN 'high' THEN 1 "
+            "WHEN 'medium' THEN 2 "
+            "ELSE 3 END"
+        )
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT * FROM coach_signals
+                    {where_clause}
+                    ORDER BY {severity_order}, confidence DESC, created_at DESC
+                    LIMIT ?""",
+                (*params, limit)
+            ).fetchall()
+        return [self._hydrate_coach_signal(row) for row in rows]
+
+    def upsert_retailer_profile(self, retailer_code, retailer_name=None, state=None,
+                                city=None, first_seen=None, last_seen=None,
+                                active_status='active', profile=None):
+        retailer_code = str(retailer_code or '').strip()
+        if not retailer_code:
+            return None
+        existing = self.get_retailer_profile(retailer_code) or {}
+        now = datetime.now().isoformat(timespec='seconds')
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO retailer_profiles
+                   (retailer_code, retailer_name, state, city, first_seen, last_seen,
+                    active_status, profile_json, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(retailer_code)
+                   DO UPDATE SET
+                     retailer_name=excluded.retailer_name,
+                     state=excluded.state,
+                     city=excluded.city,
+                     first_seen=COALESCE(retailer_profiles.first_seen, excluded.first_seen),
+                     last_seen=excluded.last_seen,
+                     active_status=excluded.active_status,
+                     profile_json=excluded.profile_json,
+                     updated_at=excluded.updated_at""",
+                (
+                    retailer_code,
+                    retailer_name or existing.get('retailer_name') or retailer_code,
+                    state or existing.get('state'),
+                    city or existing.get('city'),
+                    first_seen or existing.get('first_seen'),
+                    last_seen or existing.get('last_seen'),
+                    active_status,
+                    json.dumps(profile or existing.get('profile') or {}, default=str),
+                    now,
+                )
+            )
+        return self.get_retailer_profile(retailer_code)
+
+    def get_retailer_profile(self, retailer_code):
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM retailer_profiles WHERE retailer_code=?",
+                (retailer_code,)
+            ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item['profile'] = self._safe_json_loads(item.get('profile_json') or '{}', {})
+        return item
+
+    def list_retailer_profiles(self, limit=250, query=None):
+        clauses = []
+        params = []
+        if query:
+            clauses.append("(LOWER(retailer_code) LIKE ? OR LOWER(COALESCE(retailer_name, '')) LIKE ?)")
+            q = f"%{str(query).strip().lower()}%"
+            params.extend([q, q])
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ''
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT * FROM retailer_profiles
+                    {where_clause}
+                    ORDER BY COALESCE(retailer_name, retailer_code)
+                    LIMIT ?""",
+                (*params, limit)
+            ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            item['profile'] = self._safe_json_loads(item.get('profile_json') or '{}', {})
+            items.append(item)
+        return items
+
+    def save_retailer_brand_metrics(self, retailer_code, brand_name, period_type,
+                                    period_start, period_end, metrics, report_id=None):
+        retailer_code = str(retailer_code or '').strip()
+        brand_name = self.normalize_brand_name(brand_name)
+        now = datetime.now().isoformat(timespec='seconds')
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO retailer_brand_metrics
+                   (retailer_code, brand_name, period_type, period_start, period_end,
+                    report_id, metrics_json, created_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    retailer_code,
+                    brand_name,
+                    period_type,
+                    period_start,
+                    period_end,
+                    report_id,
+                    json.dumps(metrics or {}, default=str),
+                    now,
+                )
+            )
+
+    def list_retailer_brand_metrics(self, retailer_code, period_type=None, period_start=None, limit=50):
+        clauses = ["retailer_code=?"]
+        params = [retailer_code]
+        if period_type:
+            clauses.append("period_type=?")
+            params.append(period_type)
+        if period_start:
+            clauses.append("period_start=?")
+            params.append(period_start)
+        where_clause = f"WHERE {' AND '.join(clauses)}"
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT * FROM retailer_brand_metrics
+                    {where_clause}
+                    ORDER BY period_start DESC, brand_name ASC
+                    LIMIT ?""",
+                (*params, limit)
+            ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            item['metrics'] = self._safe_json_loads(item.get('metrics_json') or '{}', {})
+            items.append(item)
+        return items
+
+    def save_coach_run(self, run_type, scope_type, scope_key, result=None,
+                       report_id=None, status='completed'):
+        now = datetime.now().isoformat(timespec='seconds')
+        with self._connect() as conn:
+            cur = conn.execute(
+                """INSERT INTO coach_runs
+                   (run_type, scope_type, scope_key, report_id, status, result_json, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (
+                    run_type,
+                    scope_type,
+                    scope_key,
+                    report_id,
+                    status,
+                    json.dumps(result or {}, default=str),
+                    now,
+                    now,
+                )
+            )
+        return cur.lastrowid
 
     # ── Agent action + memory operations ────────────────────────────────────
 
