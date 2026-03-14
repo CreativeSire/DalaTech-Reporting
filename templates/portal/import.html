@@ -589,6 +589,15 @@ async function startAnalysis() {
 
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+async function parseJsonResponse(res) {
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+  const text = await res.text();
+  if (!contentType.includes('application/json')) {
+    throw new Error(`Server returned an unexpected response (${res.status}).`);
+  }
+  return JSON.parse(text);
+}
+
 async function animateAnalysisSteps() {
   const steps = [1,2,3,4,5,6];
   for (const i of steps) {
@@ -774,9 +783,17 @@ async function startGeneration() {
   fd.append('end_date',         endDate);
   fd.append('selected_brands',  selectedBrands.join(','));
   fd.append('report_type',      document.getElementById('reportType').value || 'custom');
+  fd.append('import_mode',      'full');
 
-  const res  = await fetch('/api/generate_async', {method:'POST', body: fd});
-  const data = await res.json();
+  let data;
+  try {
+    const res = await fetch('/api/generate_async', {method:'POST', body: fd});
+    data = await parseJsonResponse(res);
+  } catch (err) {
+    alert('Generation failed: ' + err.message);
+    goToStep(4);
+    return;
+  }
   if (!data.success) { alert('Generation failed: ' + data.error); goToStep(4); return; }
 
   currentJobId = data.job_id;
@@ -792,7 +809,7 @@ async function pollProgress(jobId, allBrands) {
     let status;
     try {
       const r = await fetch('/api/generation_status/' + jobId);
-      status = await r.json();
+      status = await parseJsonResponse(r);
     } catch(e) { continue; }
 
     // Update current brand animation
@@ -815,7 +832,9 @@ async function pollProgress(jobId, allBrands) {
     document.getElementById('overallBar').style.width   = pct + '%';
     document.getElementById('overallPct').textContent   = pct + '%';
     document.getElementById('genSubtitle').textContent  =
-      status.current_brand ? 'Generating: ' + status.current_brand : 'Processing…';
+      status.current_brand
+        ? (status.status === 'queued' ? status.current_brand : 'Generating: ' + status.current_brand)
+        : 'Processing…';
 
     if (status.status === 'done' || status.status === 'error') {
       if (currentBrand) finishBrandRow(currentBrand, true);
@@ -845,14 +864,17 @@ function renderDone(status) {
   const done  = status.brands_done || [];
   const ok    = done.filter(b => !b.error).length;
   const errs  = done.filter(b =>  b.error).length;
+  const artifactsDeferred = !!status.artifacts_deferred;
   document.getElementById('doneSub').textContent =
-    ok + ' brand reports generated' + (errs > 0 ? ` · ${errs} errors` : '') + ' · All data saved to history';
+    artifactsDeferred
+      ? `${ok} brands imported${errs > 0 ? ` · ${errs} issues` : ''} · Downloads render on demand`
+      : ok + ' brand reports generated' + (errs > 0 ? ` · ${errs} errors` : '') + ' · All data saved to history';
 
   const grid = document.getElementById('outputGrid');
   const rows = [
-    {icon:'📄', title:'PDF Reports', sub: ok+'/'+done.length+' generated', link:'/brands', label:'Browse Brands'},
-    {icon:'📊', title:'Interactive HTMLs', sub: ok + ' dashboards ready', link:'/brands', label:'View HTMLs'},
-    {icon:'🌐', title:'Portfolio Dashboard', sub: 'Master view all brands', link: status.portfolio_dashboard || '/dashboard', label:'Open', target:'_blank'},
+    {icon:'📄', title:'PDF Reports', sub: artifactsDeferred ? 'Generate on first download' : ok+'/'+done.length+' generated', link:'/brands', label:'Browse Brands'},
+    {icon:'📊', title:'Interactive HTMLs', sub: artifactsDeferred ? 'Open any brand to render' : ok + ' dashboards ready', link:'/brands', label:'View HTMLs'},
+    {icon:'🌐', title:'Portfolio Dashboard', sub: 'Master view all brands', link: status.dashboard_url || status.portfolio_dashboard || '/dashboard', label:'Open'},
     {icon:'🔔', title:'Smart Alerts', sub: 'New alerts generated', link:'/alerts', label:'Review Alerts'},
   ];
   grid.innerHTML = rows.map(r => `

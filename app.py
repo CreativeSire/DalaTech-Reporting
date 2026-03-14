@@ -23,6 +23,7 @@ Routes:
 """
 
 import os, io, json, traceback, shutil, uuid, threading, tempfile, zipfile
+from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 from datetime import datetime
 from functools import wraps
@@ -86,6 +87,8 @@ os.makedirs(PDF_DIR,  exist_ok=True)
 os.makedirs(HTML_DIR, exist_ok=True)
 
 ds = DataStore()
+GENERATION_WORKERS = max(1, int(os.environ.get('GENERATION_WORKERS', '2') or '2'))
+GENERATION_EXECUTOR = ThreadPoolExecutor(max_workers=GENERATION_WORKERS)
 
 
 def _money_2dp(value):
@@ -102,6 +105,103 @@ def _money_csv_2dp(value):
         return f"{float(value):.2f}"
     except (TypeError, ValueError):
         return "0.00"
+
+
+def _coerce_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _parse_generation_options(source):
+    import_mode = (source.get('import_mode') or 'full').strip().lower()
+    if import_mode not in {'fast', 'full'}:
+        import_mode = 'full'
+
+    defaults = {
+        'generate_artifacts': import_mode == 'full',
+        'generate_narratives': import_mode == 'full',
+        'sync_sheets': import_mode == 'full',
+        'refresh_copilot': import_mode == 'full',
+        'launch_coach': import_mode == 'full',
+    }
+
+    return {
+        'import_mode': import_mode,
+        'generate_artifacts': _coerce_bool(source.get('generate_artifacts'), defaults['generate_artifacts']),
+        'generate_narratives': _coerce_bool(source.get('generate_narratives'), defaults['generate_narratives']),
+        'sync_sheets': _coerce_bool(source.get('sync_sheets'), defaults['sync_sheets']),
+        'refresh_copilot': _coerce_bool(source.get('refresh_copilot'), defaults['refresh_copilot']),
+        'launch_coach': _coerce_bool(source.get('launch_coach'), defaults['launch_coach']),
+    }
+
+
+def _generation_result_payload(report_id, report_meta, brands, portfolio_filename=None, brands_done=None, options=None, coach_job_id=None):
+    options = options or {}
+    brands_done = brands_done or []
+    report_type = report_meta.get('report_type') if report_meta else None
+    pdf_count = sum(1 for row in brands_done if row.get('pdf'))
+    html_count = sum(1 for row in brands_done if row.get('html'))
+    dashboard_url = f"/dashboard?report_id={report_id}"
+    latest_dashboard_url = "/dashboard"
+    portfolio_dashboard = f"/download/html/{portfolio_filename}" if portfolio_filename else dashboard_url
+    return {
+        'report_id': report_id,
+        'report_type': report_type,
+        'brands': len(brands),
+        'pdf_count': pdf_count,
+        'html_count': html_count,
+        'dashboard_url': dashboard_url,
+        'latest_dashboard_url': latest_dashboard_url,
+        'portfolio_dashboard': portfolio_dashboard,
+        'portfolio_file': portfolio_filename,
+        'artifacts_deferred': not options.get('generate_artifacts', True),
+        'background_refresh_queued': bool(options.get('background_refresh_queued')),
+        'import_mode': options.get('import_mode', 'full'),
+        'coach_job_id': coach_job_id,
+    }
+
+
+def _run_post_import_maintenance(report_id, brands, all_kpis, report_type, end_date, portfolio_avg_revenue, filename, refresh_copilot=True, launch_coach=True):
+    """Secondary refresh work that should not block the import completing."""
+    try:
+        report = ds.get_report(report_id) or {}
+        for brand_name in brands:
+            kpis = all_kpis.get(brand_name) or {}
+            history = ds.get_brand_history(brand_name, limit=3)
+            check_and_save_alerts(report_id, brand_name, kpis, portfolio_avg_revenue, history[1:], ds)
+
+        run_portfolio_alerts(report_id, ds.get_all_brand_kpis(report_id), ds)
+        _compute_and_save_churn(report_id)
+
+        for brand_name in brands:
+            kpis = all_kpis.get(brand_name)
+            if not kpis:
+                continue
+            _attach_reorder_trend(
+                brand_name=brand_name,
+                kpis=kpis,
+                report_type=report_type or report.get('report_type'),
+                cutoff_date=end_date,
+            )
+
+        if refresh_copilot:
+            _refresh_copilot_state(
+                report_id=report_id,
+                reason=f'post_import_refresh:{filename}',
+                source='report_generation',
+            )
+        if launch_coach:
+            _launch_coach_refresh_job(
+                mode='current',
+                report_id=report_id,
+                include_pairs=True,
+                source='report_generation',
+            )
+    except Exception:
+        traceback.print_exc()
 
 
 def _decorate_retailer_rows(rows):
@@ -1051,60 +1151,74 @@ def api_preview():
 
 # ── Async generate ────────────────────────────────────────────────────────────
 
-def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, filename, report_type=None):
-    """Background thread: runs full generation and persists state to SQLite."""
+def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, filename, report_type=None, options=None):
+    """Queued background import. Persists report data first and can defer heavy extras."""
+    options = options or {}
+
     def _upd(**kw):
         ds.update_job(job_id, **kw)
 
-    try:
-        df_all    = load_and_clean(io.BytesIO(file_bytes))
-        df_ranged = filter_by_date(df_all, start_date, end_date)
-        brand_data = split_by_brand(df_ranged)
+    def _append_error(message):
+        job_obj = ds.get_job(job_id) or {}
+        errs = job_obj.get('errors', [])
+        errs.append(message)
+        _upd(errors=errs)
 
-        # Filter to selected brands
+    try:
+        _upd(status='running', current_brand='Validating workbook...', progress=2)
+        df_all = load_and_clean(io.BytesIO(file_bytes))
+        df_ranged = filter_by_date(df_all, start_date, end_date)
+        if df_ranged.empty:
+            raise ValueError(f'No data between {start_date} and {end_date}.')
+
+        brand_data = split_by_brand(df_ranged)
         if selected_brands:
             brand_data = {b: df for b, df in brand_data.items() if b in selected_brands}
+        if not brand_data:
+            raise ValueError('No sales data found after filtering the selected brands.')
 
         brands = list(brand_data.keys())
         catalog_df = (
             pd.concat(list(brand_data.values()), ignore_index=True)
             if brand_data else df_ranged.head(0).copy()
         )
-        _upd(total=len(brands) + 1)  # +1 for portfolio
+        _upd(total=len(brands), current_brand='Calculating KPIs...', progress=8)
 
-        # Compute all KPIs
         all_kpis = {}
-        for b in brands:
-            all_kpis[b] = calculate_kpis(brand_data[b])
+        for brand_name in brands:
+            all_kpis[brand_name] = calculate_kpis(brand_data[brand_name])
 
         total_portfolio_revenue = sum(k['total_revenue'] for k in all_kpis.values())
-        portfolio_avg_revenue   = total_portfolio_revenue / max(len(brands), 1)
+        portfolio_avg_revenue = total_portfolio_revenue / max(len(brands), 1)
+        for brand_name in brands:
+            all_kpis[brand_name]['perf_score'] = calculate_perf_score(all_kpis[brand_name], portfolio_avg_revenue)
 
-        for b in brands:
-            all_kpis[b]['perf_score'] = calculate_perf_score(all_kpis[b], portfolio_avg_revenue)
-
-        # Save report to DB — upsert: reuse existing row for same date range
         all_stores = set()
-        for k in all_kpis.values():
-            if k.get('top_stores') is not None and not k['top_stores'].empty:
-                all_stores.update(k['top_stores']['Store'].tolist())
+        for kpis in all_kpis.values():
+            if kpis.get('top_stores') is not None and not kpis['top_stores'].empty:
+                all_stores.update(kpis['top_stores']['Store'].tolist())
 
         total_qty_sum = sum(k['total_qty'] for k in all_kpis.values())
+        _upd(current_brand='Saving report to history...', progress=18)
         existing_report = ds.get_report_by_date_range(start_date, end_date)
         if existing_report:
             report_id = existing_report['id']
-            ds.clear_report_data(report_id)  # wipe old alerts/kpis to avoid duplicates
-            ds.update_report(report_id, xls_filename=filename,
-                             total_revenue=total_portfolio_revenue,
-                             total_qty=total_qty_sum,
-                             total_stores=len(all_stores),
-                             brand_count=len(brands),
-                             report_type=report_type,
-                             start_date=start_date,
-                             end_date=end_date)
+            ds.clear_report_data(report_id)
+            ds.update_report(
+                report_id,
+                xls_filename=filename,
+                total_revenue=total_portfolio_revenue,
+                total_qty=total_qty_sum,
+                total_stores=len(all_stores),
+                brand_count=len(brands),
+                report_type=report_type,
+                start_date=start_date,
+                end_date=end_date,
+            )
         else:
             report_id = ds.save_report(
-                start_date=start_date, end_date=end_date,
+                start_date=start_date,
+                end_date=end_date,
                 xls_filename=filename,
                 total_revenue=total_portfolio_revenue,
                 total_qty=total_qty_sum,
@@ -1113,88 +1227,103 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                 report_type=report_type,
             )
         report_meta = ds.get_report(report_id) or {}
-        _upd(report_id=report_id)
+        _upd(report_id=report_id, progress=24)
         _queue_catalog_candidates(catalog_df, source_filename=filename, report_id=report_id)
 
-        # Save KPIs + alerts
-        for b in brands:
-            k = all_kpis[b]
-            ps = k.get('perf_score', {})
-            share = round(k['total_revenue'] / max(total_portfolio_revenue, 1) * 100, 2)
-            ds.save_brand_kpis(report_id, b, k, ps, share)
-            ds.save_brand_detail_json(report_id, b, k)
-            if not k['daily_sales'].empty:
-                ds.save_daily_sales(report_id, b, k['daily_sales'])
-            history = ds.get_brand_history(b, limit=3)
-            check_and_save_alerts(report_id, b, k, portfolio_avg_revenue, history[1:], ds)
-        run_portfolio_alerts(report_id, ds.get_all_brand_kpis(report_id), ds)
-        _compute_and_save_churn(report_id)
+        _upd(current_brand='Persisting brand metrics...', progress=28)
+        defer_secondary_refresh = options.get('import_mode') == 'fast'
 
-        for b in brands:
-            _attach_reorder_trend(
-                brand_name=b,
-                kpis=all_kpis[b],
-                report_type=report_type or report_meta.get('report_type'),
-                cutoff_date=end_date,
-            )
+        for brand_name in brands:
+            kpis = all_kpis[brand_name]
+            perf_score = kpis.get('perf_score', {})
+            share = round(kpis['total_revenue'] / max(total_portfolio_revenue, 1) * 100, 2)
+            ds.save_brand_kpis(report_id, brand_name, kpis, perf_score, share)
+            ds.save_brand_detail_json(report_id, brand_name, kpis)
+            if not kpis['daily_sales'].empty:
+                ds.save_daily_sales(report_id, brand_name, kpis['daily_sales'])
+            if not defer_secondary_refresh:
+                history = ds.get_brand_history(brand_name, limit=3)
+                check_and_save_alerts(report_id, brand_name, kpis, portfolio_avg_revenue, history[1:], ds)
 
-        # ── Pre-generate AI narratives (batch, before PDFs so they embed in them) ─
+        if not defer_secondary_refresh:
+            run_portfolio_alerts(report_id, ds.get_all_brand_kpis(report_id), ds)
+            _compute_and_save_churn(report_id)
+
+            _upd(current_brand='Building reorder trends...', progress=48)
+            for brand_name in brands:
+                _attach_reorder_trend(
+                    brand_name=brand_name,
+                    kpis=all_kpis[brand_name],
+                    report_type=report_type or report_meta.get('report_type'),
+                    cutoff_date=end_date,
+                )
+        else:
+            _upd(current_brand='Scheduling secondary refresh...', progress=48)
+
+        for brand_name in brands:
+            ds.get_or_create_token(brand_name)
+
         ai_narratives = {}
-        if gemini_available():
-            _upd(current_brand='Generating AI Narratives...')
-            for b in brands:
+        if options.get('generate_narratives') and gemini_available():
+            _upd(current_brand='Generating narratives...', progress=58)
+            for brand_name in brands:
                 try:
-                    history = ds.get_brand_history(b, limit=6)
-                    text, _ = generate_brand_narrative(b, all_kpis[b], history, portfolio_avg_revenue)
+                    history = ds.get_brand_history(brand_name, limit=6)
+                    text, _ = generate_brand_narrative(brand_name, all_kpis[brand_name], history, portfolio_avg_revenue)
                     if text:
-                        ai_narratives[b] = text
-                        ds.save_narrative(report_id, b, text)
+                        ai_narratives[brand_name] = text
+                        ds.save_narrative(report_id, brand_name, text)
                 except Exception:
                     pass
-            # Portfolio narrative
             try:
-                pt = generate_portfolio_narrative(all_kpis, report_meta)
-                if pt:
-                    ds.save_narrative(report_id, '__portfolio__', pt)
+                portfolio_text = generate_portfolio_narrative(all_kpis, report_meta)
+                if portfolio_text:
+                    ds.save_narrative(report_id, '__portfolio__', portfolio_text)
             except Exception:
                 pass
 
-        # ── Pre-push to Google Sheets (auto, before PDFs so URL embeds in them) ──
         sheets_urls = {}
-        try:
-            from modules.sheets import push_brand_to_sheets, sheets_available
-            if sheets_available():
-                _upd(current_brand='Syncing to Google Sheets...')
-                for b in brands:
-                    try:
-                        url = push_brand_to_sheets(
-                            brand_name=b,
-                            brand_df=brand_data[b],
-                            start_date=start_date,
-                            end_date=end_date,
-                        )
-                        if url:
-                            sheets_urls[b] = url
-                            ds.log_activity('sheets_sync', 'Auto-synced to Google Sheets', b, report_id)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        if options.get('sync_sheets'):
+            try:
+                from modules.sheets import push_brand_to_sheets, sheets_available
+                if sheets_available():
+                    _upd(current_brand='Syncing external sheets...', progress=66)
+                    for brand_name in brands:
+                        try:
+                            url = push_brand_to_sheets(
+                                brand_name=brand_name,
+                                brand_df=brand_data[brand_name],
+                                start_date=start_date,
+                                end_date=end_date,
+                            )
+                            if url:
+                                sheets_urls[brand_name] = url
+                                ds.log_activity('sheets_sync', 'Auto-synced to Google Sheets', brand_name, report_id)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
-        # Generate per-brand files with retry logic
-        start_dt  = datetime.strptime(start_date, '%Y-%m-%d')
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
         month_tag = start_dt.strftime('%b%Y')
+        brands_done = [
+            {'brand': brand_name, 'pdf': False, 'html': False, 'error': None, 'deferred': not options.get('generate_artifacts')}
+            for brand_name in brands
+        ]
+        portfolio_filename = None
 
         def try_generate_pdf(brand_name, pdf_path, kpis, max_retries=2):
-            """Attempt PDF generation with retries. Returns (success, is_pdf, error)."""
             for attempt in range(max_retries):
                 try:
                     report_context = _brand_report_context(brand_name, cutoff_date=end_date)
                     coach_snapshot = build_scope_snapshot(ds, 'brand', scope_key=brand_name, report_id=report_id, persist=True) if coach_history_available() else None
                     coach = _coach_summary_for_snapshot(coach_snapshot, persist=True, use_gemini=False) if coach_snapshot else None
                     result_path = generate_pdf_html(
-                        output_path=pdf_path, brand_name=brand_name, kpis=kpis,
-                        start_date=start_date, end_date=end_date,
+                        output_path=pdf_path,
+                        brand_name=brand_name,
+                        kpis=kpis,
+                        start_date=start_date,
+                        end_date=end_date,
                         portfolio_avg_revenue=portfolio_avg_revenue,
                         total_portfolio_revenue=total_portfolio_revenue,
                         report_type=report_type or report_meta.get('report_type'),
@@ -1205,147 +1334,198 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                         gmv_window=report_context.get('gmv_window'),
                         coach=coach,
                     )
-                    # Check if PDF was actually created or if HTML fallback was used
                     is_pdf = result_path.endswith('.pdf') and os.path.exists(result_path)
                     is_html = result_path.endswith('.html') and os.path.exists(result_path)
                     if is_pdf:
-                        return True, True, None  # success, is_pdf, error
-                    elif is_html:
-                        return True, False, None  # success (HTML fallback), is_pdf=False, error
-                    else:
-                        return False, False, "File not created"
-                except Exception as e:
-                    if attempt < max_retries - 1:
-                        pass   # retry immediately — no sleep
-                    else:
-                        return False, False, str(e)
-            return False, False, "Max retries exceeded"
+                        return True, True, None
+                    if is_html:
+                        return True, False, None
+                    return False, False, 'File not created'
+                except Exception as exc:
+                    if attempt >= max_retries - 1:
+                        return False, False, str(exc)
+            return False, False, 'Max retries exceeded'
 
         def try_generate_html(brand_name, html_path, kpis, max_retries=2):
-            """Attempt HTML generation with retries."""
             for attempt in range(max_retries):
                 try:
                     report_context = _brand_report_context(brand_name, cutoff_date=end_date)
                     coach_snapshot = build_scope_snapshot(ds, 'brand', scope_key=brand_name, report_id=report_id, persist=True) if coach_history_available() else None
                     coach = _coach_summary_for_snapshot(coach_snapshot, persist=True, use_gemini=False) if coach_snapshot else None
-                    generate_html(output_path=html_path, brand_name=brand_name, kpis=kpis,
-                                  start_date=start_date, end_date=end_date,
-                                  portfolio_avg_revenue=portfolio_avg_revenue,
-                                  total_portfolio_revenue=total_portfolio_revenue,
-                                  report_type=report_type or report_meta.get('report_type'),
-                                  month_label=report_meta.get('month_label'),
-                                  growth_outlook=report_context.get('growth_outlook'),
-                                  gmv_window=report_context.get('gmv_window'),
-                                  coach=coach)
+                    generate_html(
+                        output_path=html_path,
+                        brand_name=brand_name,
+                        kpis=kpis,
+                        start_date=start_date,
+                        end_date=end_date,
+                        portfolio_avg_revenue=portfolio_avg_revenue,
+                        total_portfolio_revenue=total_portfolio_revenue,
+                        report_type=report_type or report_meta.get('report_type'),
+                        month_label=report_meta.get('month_label'),
+                        growth_outlook=report_context.get('growth_outlook'),
+                        gmv_window=report_context.get('gmv_window'),
+                        coach=coach,
+                    )
                     return True, None
-                except Exception as e:
-                    if attempt < max_retries - 1:
-                        pass   # retry immediately
-                    else:
-                        return False, str(e)
-            return False, "Max retries exceeded"
+                except Exception as exc:
+                    if attempt >= max_retries - 1:
+                        return False, str(exc)
+            return False, 'Max retries exceeded'
 
-        brands_done = []
-        for i, brand_name in enumerate(brands):
-            _upd(current_brand=brand_name)
-            safe      = _safe_name(brand_name)
-            pdf_path  = os.path.join(PDF_DIR,  f"{safe}_Report_{month_tag}.pdf")
-            html_path = os.path.join(HTML_DIR, f"{safe}_Report_{month_tag}.html")
-            kpis      = all_kpis[brand_name]
+        if options.get('generate_artifacts'):
+            _upd(current_brand='Generating downloadable reports...', progress=72)
+            brands_done = []
+            for index, brand_name in enumerate(brands):
+                _upd(current_brand=f'Building report for {brand_name}')
+                safe = _safe_name(brand_name)
+                pdf_path = os.path.join(PDF_DIR, f"{safe}_Report_{month_tag}.pdf")
+                html_path = os.path.join(HTML_DIR, f"{safe}_Report_{month_tag}.html")
+                kpis = all_kpis[brand_name]
+                brand_result = {'brand': brand_name, 'pdf': False, 'html': False, 'error': None, 'deferred': False}
 
-            brand_result = {'brand': brand_name, 'pdf': False, 'html': False, 'error': None}
+                pdf_success, is_actually_pdf, pdf_error = try_generate_pdf(brand_name, pdf_path, kpis)
+                brand_result['pdf'] = pdf_success and is_actually_pdf
+                brand_result['html'] = pdf_success
+                if pdf_error:
+                    brand_result['error'] = f'PDF: {pdf_error}'
 
-            # Generate PDF with retry (may return HTML as fallback)
-            pdf_success, is_actually_pdf, pdf_error = try_generate_pdf(brand_name, pdf_path, kpis)
-            brand_result['pdf'] = pdf_success and is_actually_pdf
-            brand_result['html'] = pdf_success  # If PDF gen succeeded (even HTML fallback), we have an HTML
-            if pdf_error:
-                brand_result['error'] = f'PDF: {pdf_error}'
+                if not pdf_success:
+                    html_success, html_error = try_generate_html(brand_name, html_path, kpis)
+                    brand_result['html'] = html_success
+                    if html_error:
+                        brand_result['error'] = (brand_result['error'] or '') + f' HTML: {html_error}'
 
-            # Only generate separate HTML if PDF generation completely failed
-            if not pdf_success:
-                html_success, html_error = try_generate_html(brand_name, html_path, kpis)
-                brand_result['html'] = html_success
-                if html_error:
-                    brand_result['error'] = (brand_result['error'] or '') + f' HTML: {html_error}'
+                if (brand_result['pdf'] or brand_result['html']) and brand_result['error']:
+                    brand_result['error'] = None
 
-            # Clear error if at least one output format succeeded
-            if (brand_result['pdf'] or brand_result['html']) and brand_result['error']:
-                brand_result['error'] = None  # Don't show error if we have at least one output
+                brands_done.append(brand_result)
+                stage_progress = 72 + round(((index + 1) / max(len(brands), 1)) * 18)
+                _upd(brands_done=brands_done, progress=min(stage_progress, 90))
 
-            brands_done.append(brand_result)
-            _upd(brands_done=brands_done, progress=round((i + 1) / (len(brands) + 1) * 100))
+            _upd(current_brand='Preparing portfolio dashboard', progress=92)
+            portfolio_path = os.path.join(HTML_DIR, f"PORTFOLIO_Dashboard_{month_tag}.html")
+            try:
+                generate_portfolio_html(
+                    output_path=portfolio_path,
+                    all_brand_kpis=all_kpis,
+                    brand_data_raw=brand_data,
+                    start_date=start_date,
+                    end_date=end_date,
+                    total_portfolio_revenue=total_portfolio_revenue,
+                )
+                portfolio_filename = os.path.basename(portfolio_path)
+            except Exception as exc:
+                _append_error(f'Portfolio: {exc}')
+        else:
+            _upd(brands_done=brands_done, current_brand='Reports saved. Downloads will render on demand.', progress=88)
 
-        # Portfolio dashboard
-        _upd(current_brand='Portfolio Dashboard')
-        portfolio_path = os.path.join(HTML_DIR, f"PORTFOLIO_Dashboard_{month_tag}.html")
-        portfolio_filename = None
-        try:
-            generate_portfolio_html(
-                output_path=portfolio_path,
-                all_brand_kpis=all_kpis,
-                brand_data_raw=brand_data,
-                start_date=start_date,
-                end_date=end_date,
-                total_portfolio_revenue=total_portfolio_revenue,
+        background_refresh_queued = False
+        if defer_secondary_refresh:
+            GENERATION_EXECUTOR.submit(
+                _run_post_import_maintenance,
+                report_id,
+                brands,
+                all_kpis,
+                report_type,
+                end_date,
+                portfolio_avg_revenue,
+                filename,
+                options.get('refresh_copilot', True),
+                options.get('launch_coach', True),
             )
-            portfolio_filename = os.path.basename(portfolio_path)
-        except Exception as e:
-            job_obj = ds.get_job(job_id) or {}
-            errs = job_obj.get('errors', [])
-            errs.append(f'Portfolio: {e}')
-            _upd(errors=errs)
+            background_refresh_queued = True
 
-        for b in brands:
-            ds.get_or_create_token(b)
+        _upd(current_brand='Refreshing intelligence...', progress=94)
+        if options.get('refresh_copilot') and not defer_secondary_refresh:
+            _refresh_copilot_state(
+                report_id=report_id,
+                reason=f'report_generation:{filename}',
+                source='report_generation',
+            )
 
-        _refresh_copilot_state(
+        coach_job_id = None
+        if options.get('launch_coach') and not defer_secondary_refresh:
+            coach_job_id = _launch_coach_refresh_job(
+                mode='current',
+                report_id=report_id,
+                include_pairs=True,
+                source='report_generation',
+            )
+
+        result_options = dict(options)
+        result_options['background_refresh_queued'] = background_refresh_queued
+        result_payload = _generation_result_payload(
             report_id=report_id,
-            reason=f'report_generation:{filename}',
-            source='report_generation',
+            report_meta=report_meta,
+            brands=brands,
+            portfolio_filename=portfolio_filename,
+            brands_done=brands_done,
+            options=result_options,
+            coach_job_id=coach_job_id,
         )
-        coach_job_id = _launch_coach_refresh_job(
-            mode='current',
-            report_id=report_id,
-            include_pairs=True,
-            source='report_generation',
+        _upd(
+            progress=100,
+            status='done',
+            current_brand=None,
+            portfolio_file=portfolio_filename,
+            brands_done=brands_done,
+            result_json=result_payload,
         )
-        _upd(progress=100, status='done', current_brand=None,
-             portfolio_file=portfolio_filename,
-             result_json={
-                 'report_id': report_id,
-                 'portfolio_file': portfolio_filename,
-                 'coach_job_id': coach_job_id,
-             })
-
     except Exception as exc:
-        _upd(status='error', error_msg=str(exc))
+        _upd(status='error', error_msg=str(exc), current_brand=None)
+
+
+def _submit_generation_job(file_bytes, start_date, end_date, selected_brands, filename, report_type=None, options=None):
+    options = options or {}
+    job_id = uuid.uuid4().hex
+    ds.create_job(job_id)
+    ds.update_job(
+        job_id,
+        status='queued',
+        progress=0,
+        total=len(selected_brands) if selected_brands else 0,
+        current_brand='Queued for processing...',
+        result_json={'import_mode': options.get('import_mode', 'full')},
+    )
+    GENERATION_EXECUTOR.submit(
+        _run_generation,
+        job_id,
+        file_bytes,
+        start_date,
+        end_date,
+        selected_brands,
+        filename,
+        report_type,
+        options,
+    )
+    return job_id
 
 
 @app.route('/api/generate_async', methods=['POST'])
 def generate_async():
     """Start background generation. Returns {job_id} immediately."""
-    file           = request.files.get('tally_file')
-    start_date     = request.form.get('start_date', '').strip()
-    end_date       = request.form.get('end_date', '').strip()
-    selected_raw   = request.form.get('selected_brands', '')
+    file = request.files.get('tally_file')
+    start_date = request.form.get('start_date', '').strip()
+    end_date = request.form.get('end_date', '').strip()
+    selected_raw = request.form.get('selected_brands', '')
     selected_brands = [b.strip() for b in selected_raw.split(',') if b.strip()] if selected_raw else []
-    report_type    = request.form.get('report_type', '').strip() or None
+    report_type = request.form.get('report_type', '').strip() or None
+    options = _parse_generation_options(request.form)
 
     if not file or not start_date or not end_date:
         return jsonify({'success': False, 'error': 'Missing file or dates'}), 400
 
     file_bytes = file.read()
-    job_id     = uuid.uuid4().hex
-    ds.create_job(job_id)   # persisted to SQLite — survives worker restarts
-
-    t = threading.Thread(
-        target=_run_generation,
-        args=(job_id, file_bytes, start_date, end_date, selected_brands, file.filename, report_type),
-        daemon=True,
+    job_id = _submit_generation_job(
+        file_bytes=file_bytes,
+        start_date=start_date,
+        end_date=end_date,
+        selected_brands=selected_brands,
+        filename=file.filename,
+        report_type=report_type,
+        options=options,
     )
-    t.start()
-    return jsonify({'success': True, 'job_id': job_id})
+    return jsonify({'success': True, 'job_id': job_id, 'import_mode': options.get('import_mode', 'full')})
 
 
 @app.route('/api/generation_status/<job_id>')
@@ -1353,7 +1533,11 @@ def generation_status(job_id):
     job = ds.get_job(job_id)
     if not job:
         return jsonify({'success': False, 'error': 'Job not found'}), 404
-    return jsonify({'success': True, **job})
+    payload = dict(job)
+    result_json = payload.get('result_json') or {}
+    if isinstance(result_json, dict):
+        payload.update(result_json)
+    return jsonify({'success': True, **payload})
 
 
 # ── Trends / Forecasting Dashboard ────────────────────────────────────────────

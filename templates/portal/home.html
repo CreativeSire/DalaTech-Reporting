@@ -14,7 +14,7 @@
   <!-- Upload Card -->
   <div class="card" style="border-top:4px solid var(--red);">
     <h3 style="color:var(--navy);margin-bottom:4px;">Generate New Reports</h3>
-    <p class="text-muted fs-sm" style="margin-bottom:20px;">Upload a Tally Excel export to generate PDFs, interactive HTMLs, and save to history.</p>
+    <p class="text-muted fs-sm" style="margin-bottom:20px;">Upload a Tally Excel export to save the report immediately. PDFs and interactive reports render on demand when opened.</p>
 
     <form id="uploadForm" enctype="multipart/form-data">
       <div class="form-group">
@@ -35,6 +35,9 @@
       <button type="submit" class="btn btn-primary" style="width:100%;" id="genBtn">
         ⚡ Generate All Reports
       </button>
+      <div class="text-muted fs-sm" style="margin-top:10px;">
+        Fast import is used here. Report data is saved immediately; PDFs and interactive report files render on demand when opened.
+      </div>
     </form>
 
     <div id="genStatus" style="display:none;margin-top:16px;"></div>
@@ -107,6 +110,70 @@
 const startDateInput = document.getElementById('homeStartDate');
 const endDateInput = document.getElementById('homeEndDate');
 const dateError = document.getElementById('dateError');
+let activeJobId = null;
+
+async function parseJsonResponse(res) {
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+  const text = await res.text();
+  if (!contentType.includes('application/json')) {
+    throw new Error(`Server returned an unexpected response (${res.status}).`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    console.error('Invalid JSON response:', text.slice(0, 500));
+    throw new Error('Server returned invalid JSON.');
+  }
+}
+
+function renderImportComplete(status) {
+  const dashboardUrl = status.dashboard_url || (status.report_id ? `/dashboard?report_id=${status.report_id}` : '/dashboard');
+  const portfolioUrl = status.portfolio_dashboard || dashboardUrl;
+  const deferredNote = status.artifacts_deferred
+    ? '<br><span class="text-muted fs-sm">Downloads are generated on demand now, which keeps imports fast for weekly and monthly uploads.</span>'
+    : '';
+  const refreshNote = status.background_refresh_queued
+    ? '<br><span class="text-muted fs-sm">Alerts, reorder trends, and coach refresh are continuing in the background.</span>'
+    : '';
+  return `<div class="flash flash-success">
+      ✅ Report saved to history for ${status.brands || 0} brands.${deferredNote}${refreshNote}
+      <br><br>
+      <a href="${dashboardUrl}" class="btn btn-navy btn-sm">View Dashboard</a>
+      &nbsp;
+      <a href="${portfolioUrl}" class="btn btn-outline btn-sm">Open Portfolio View</a>
+    </div>`;
+}
+
+async function pollImportJob(jobId, btn, status) {
+  activeJobId = jobId;
+  while (activeJobId === jobId) {
+    await new Promise(resolve => setTimeout(resolve, 900));
+    let payload;
+    try {
+      const res = await fetch(`/api/generation_status/${jobId}`, { cache: 'no-store' });
+      payload = await parseJsonResponse(res);
+    } catch (err) {
+      status.innerHTML = `<div class="flash flash-error">❌ ${err.message}</div>`;
+      break;
+    }
+
+    const progress = Number(payload.progress || 0);
+    const phase = payload.current_brand || (payload.status === 'queued' ? 'Queued for processing...' : 'Processing import...');
+    status.innerHTML = `<div class="flash flash-success">Processing import... ${progress}%<br><span class="text-muted fs-sm">${phase}</span></div>`;
+
+    if (payload.status === 'done') {
+      status.innerHTML = renderImportComplete(payload);
+      break;
+    }
+    if (payload.status === 'error') {
+      status.innerHTML = `<div class="flash flash-error">❌ ${payload.error_msg || 'Import failed.'}</div>`;
+      break;
+    }
+  }
+  btn.disabled = false;
+  btn.textContent = '⚡ Generate All Reports';
+  activeJobId = null;
+}
 
 function validateDates() {
   const start = new Date(startDateInput.value);
@@ -154,29 +221,31 @@ document.getElementById('uploadForm').addEventListener('submit', async function(
   btn.disabled = true;
   btn.textContent = 'Generating... please wait';
   status.style.display = 'block';
-  status.innerHTML = '<div class="flash flash-success">Processing file and generating reports for all brands...</div>';
+  status.innerHTML = '<div class="flash flash-success">Uploading file and queueing import...</div>';
 
   const fd = new FormData(this);
+  fd.append('import_mode', 'fast');
+  fd.append('generate_artifacts', '0');
+  fd.append('generate_narratives', '0');
+  fd.append('sync_sheets', '0');
+  fd.append('refresh_copilot', '0');
+  fd.append('launch_coach', '0');
   try {
-    const res = await fetch('/generate', {method:'POST', body:fd});
-    const data = await res.json();
-    if (data.success) {
-      status.innerHTML = `<div class="flash flash-success">
-        ✅ Done! ${data.pdf_count} PDFs · ${data.html_count} HTMLs generated for ${data.brands} brands.
-        ${data.errors.length > 0 ? `<br><span style="color:var(--amber);">${data.errors.length} errors — see console.</span>` : ''}
-        <br><br>
-        <a href="/dashboard?report_id=${data.report_id}" class="btn btn-navy btn-sm">View Dashboard</a>
-        &nbsp;
-        <a href="${data.portfolio_dashboard}" target="_blank" class="btn btn-outline btn-sm">Portfolio Dashboard</a>
-      </div>`;
-    } else {
-      status.innerHTML = `<div class="flash flash-error">❌ ${data.error}</div>`;
+    const res = await fetch('/api/generate_async', {method:'POST', body:fd});
+    const data = await parseJsonResponse(res);
+    if (!data.success || !data.job_id) {
+      status.innerHTML = `<div class="flash flash-error">❌ ${data.error || 'Could not queue the import.'}</div>`;
+      btn.disabled = false;
+      btn.textContent = '⚡ Generate All Reports';
+      return;
     }
+    status.innerHTML = '<div class="flash flash-success">Import queued. Preparing workbook...</div>';
+    await pollImportJob(data.job_id, btn, status);
   } catch(err) {
     status.innerHTML = `<div class="flash flash-error">❌ Request failed: ${err.message}</div>`;
+    btn.disabled = false;
+    btn.textContent = '⚡ Generate All Reports';
   }
-  btn.disabled = false;
-  btn.textContent = '⚡ Generate All Reports';
 });
 </script>
 {% endblock %}
