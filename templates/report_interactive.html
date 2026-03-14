@@ -945,7 +945,7 @@
   <section class="coach-strip">
     <div class="coach-strip-top">
       <div>
-        <div class="coach-strip-kicker">Sales Coach</div>
+        <div class="coach-strip-kicker">Summary</div>
         <h3>{{ coach.summary.headline }}</h3>
         <p>{{ coach.summary.summary }}</p>
       </div>
@@ -957,7 +957,7 @@
     </div>
     <div class="coach-grid">
       <div class="coach-panel">
-        <h4>Priority Actions</h4>
+        <h4>Recommended Actions</h4>
         <ul>
           {% for action in coach.summary.recommended_actions %}
           <li>{{ action }}</li>
@@ -965,14 +965,14 @@
         </ul>
       </div>
       <div class="coach-panel">
-        <h4>Open Signals</h4>
+        <h4>Key Signals</h4>
         {% for signal in coach.signals[:3] %}
         <div class="coach-signal-item">
           <strong>{{ signal.evidence.title }}</strong>
           <div>{{ signal.evidence.message }}</div>
         </div>
         {% else %}
-        <div>No major coach signals are open for this brand in the selected period.</div>
+        <div>No material signal is open for this report period.</div>
         {% endfor %}
       </div>
     </div>

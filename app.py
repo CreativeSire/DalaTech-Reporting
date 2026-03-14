@@ -319,6 +319,227 @@ def _attach_reorder_trend(brand_name: str, kpis: dict | None,
     return kpis
 
 
+def _report_summary_payload(brand_name: str, kpis: dict, report: dict | None) -> dict:
+    """Build a report-native summary block from saved KPI history."""
+    report_type = str((report or {}).get('report_type') or '').strip().lower()
+    period_label = (report or {}).get('month_label') or (
+        f"{(report or {}).get('start_date', '')} to {(report or {}).get('end_date', '')}"
+    ).strip()
+    history_rows = list(reversed(ds.get_brand_history(brand_name, limit=18, report_type=report_type or None)))
+
+    current_report_id = (report or {}).get('id')
+    current_start = str((report or {}).get('start_date') or '')[:10]
+    current_end = str((report or {}).get('end_date') or '')[:10]
+
+    def _safe_float(value):
+        try:
+            return float(value or 0)
+        except Exception:
+            return 0.0
+
+    def _safe_int(value):
+        try:
+            return int(round(float(value or 0)))
+        except Exception:
+            return 0
+
+    def _fmt_money(value):
+        return f"₦{_safe_float(value):,.2f}"
+
+    def _fmt_qty(value):
+        return f"{_safe_float(value):,.1f}"
+
+    def _pct_delta(current_value, previous_value):
+        current_value = _safe_float(current_value)
+        previous_value = _safe_float(previous_value)
+        if previous_value == 0:
+            return None if current_value == 0 else 100.0
+        return round(((current_value - previous_value) / previous_value) * 100, 1)
+
+    def _comparison_label(kind: str) -> str:
+        if kind == 'weekly':
+            return 'prior week'
+        if kind == 'monthly':
+            return 'prior month'
+        if kind == 'quarterly':
+            return 'prior quarter'
+        if kind == 'yearly':
+            return 'prior year'
+        return 'prior comparable period'
+
+    current_history_row = None
+    previous_history_row = None
+    current_index = None
+    for idx, row in enumerate(history_rows):
+        row_start = str(row.get('start_date') or '')[:10]
+        row_end = str(row.get('end_date') or '')[:10]
+        if (
+            (current_report_id and row.get('report_id') == current_report_id) or
+            (row_start == current_start and row_end == current_end)
+        ):
+            current_history_row = row
+            current_index = idx
+            break
+    if current_index is not None and current_index > 0:
+        previous_history_row = history_rows[current_index - 1]
+    if current_history_row is None:
+        current_history_row = {
+            'report_id': current_report_id,
+            'month_label': period_label,
+            'start_date': current_start,
+            'end_date': current_end,
+            'report_type': report_type,
+            'total_revenue': _safe_float(kpis.get('total_revenue')),
+            'total_qty': _safe_float(kpis.get('total_qty')),
+            'num_stores': _safe_int(kpis.get('num_stores')),
+            'repeat_pct': _safe_float(kpis.get('repeat_pct')),
+            'repeat_stores': _safe_int(kpis.get('repeat_stores')),
+            'single_stores': _safe_int(kpis.get('single_stores')),
+            'stock_days_cover': _safe_float(kpis.get('stock_days_cover')),
+            'inv_health_status': str(kpis.get('inv_health_status') or ''),
+            'top_store_name': kpis.get('top_store_name'),
+            'top_store_revenue': _safe_float(kpis.get('top_store_revenue')),
+        }
+
+    current_revenue = _safe_float(kpis.get('total_revenue'))
+    current_qty = _safe_float(kpis.get('total_qty'))
+    current_stores = _safe_int(kpis.get('num_stores'))
+    current_repeat = _safe_float(kpis.get('repeat_pct'))
+    current_repeat_stores = _safe_int(kpis.get('repeat_stores'))
+    current_single_stores = _safe_int(kpis.get('single_stores'))
+    stock_days = _safe_float(kpis.get('stock_days_cover'))
+    inventory_status = str(kpis.get('inv_health_status') or 'No Stock Data').strip() or 'No Stock Data'
+    top_store_name = str(kpis.get('top_store_name') or '').strip()
+    top_store_revenue = _safe_float(kpis.get('top_store_revenue'))
+    top_store_pct = _safe_float(kpis.get('top_store_pct'))
+
+    previous_revenue = _safe_float(previous_history_row.get('total_revenue')) if previous_history_row else 0.0
+    previous_qty = _safe_float(previous_history_row.get('total_qty')) if previous_history_row else 0.0
+    previous_repeat = _safe_float(previous_history_row.get('repeat_pct')) if previous_history_row else 0.0
+    previous_stores = _safe_int(previous_history_row.get('num_stores')) if previous_history_row else 0
+
+    revenue_delta = _pct_delta(current_revenue, previous_revenue) if previous_history_row else None
+    quantity_delta = _pct_delta(current_qty, previous_qty) if previous_history_row else None
+    repeat_delta = round(current_repeat - previous_repeat, 1) if previous_history_row else None
+    store_delta = current_stores - previous_stores if previous_history_row else None
+    compare_label = _comparison_label(report_type)
+
+    if revenue_delta is not None and revenue_delta <= -12:
+        headline = 'Revenue slowed'
+    elif revenue_delta is not None and revenue_delta >= 12:
+        headline = 'Revenue accelerated'
+    elif repeat_delta is not None and repeat_delta >= 10:
+        headline = 'Repeat purchase improved'
+    elif inventory_status in {'Watch', 'Low Stock'} or (stock_days > 0 and stock_days < 7):
+        headline = 'Inventory needs attention'
+    else:
+        headline = 'Performance summary'
+
+    summary_parts = [
+        (
+            f"{brand_name} closed {period_label} at {_fmt_money(current_revenue)} "
+            f"from {_fmt_qty(current_qty)} packs across {current_stores} "
+            f"store{'s' if current_stores != 1 else ''}."
+        )
+    ]
+    if previous_history_row:
+        delta_bits = []
+        if revenue_delta is not None:
+            direction = 'up' if revenue_delta >= 0 else 'down'
+            delta_bits.append(f"revenue was {direction} {abs(revenue_delta):.1f}% versus the {compare_label}")
+        if quantity_delta is not None:
+            direction = 'up' if quantity_delta >= 0 else 'down'
+            delta_bits.append(f"quantity moved {direction} {abs(quantity_delta):.1f}%")
+        if repeat_delta is not None:
+            direction = 'improved to' if repeat_delta >= 0 else 'softened to'
+            delta_bits.append(f"repeat purchase {direction} {current_repeat:.1f}% from {previous_repeat:.1f}%")
+        if delta_bits:
+            summary_parts.append(delta_bits[0].capitalize() + (f", while {', '.join(delta_bits[1:])}." if len(delta_bits) > 1 else '.'))
+    else:
+        summary_parts.append(
+            f"This is the first stored {report_type or 'comparable'} period for direct comparison, so the next cycle will unlock a trend delta."
+        )
+
+    if inventory_status != 'No Stock Data' or stock_days > 0 or top_store_name:
+        ops_bits = []
+        if inventory_status != 'No Stock Data':
+            ops_bits.append(f"inventory is currently {inventory_status.lower()}")
+        if stock_days > 0:
+            ops_bits.append(f"with {stock_days:.1f} days of cover")
+        if top_store_name and top_store_revenue > 0:
+            concentration = f", contributing {top_store_pct:.1f}% of revenue" if top_store_pct > 0 else ''
+            ops_bits.append(f"the lead outlet was {top_store_name}{concentration}")
+        if ops_bits:
+            summary_parts.append(', '.join(ops_bits).capitalize() + '.')
+
+    signals = []
+    if previous_history_row and revenue_delta is not None:
+        signals.append({
+            'signal_type': 'revenue_comparison',
+            'evidence': {
+                'title': f"Revenue vs {compare_label.title()}",
+                'message': (
+                    f"{brand_name} posted {_fmt_money(current_revenue)} in {period_label}, "
+                    f"{'up' if revenue_delta >= 0 else 'down'} {abs(revenue_delta):.1f}% versus the {compare_label}."
+                ),
+            },
+        })
+    else:
+        signals.append({
+            'signal_type': 'comparison_pending',
+            'evidence': {
+                'title': 'Comparable Trend',
+                'message': f"No prior {report_type or 'comparable'} report is stored yet for a direct side-by-side comparison.",
+            },
+        })
+    signals.append({
+        'signal_type': 'repeat_purchase',
+        'evidence': {
+            'title': 'Repeat Purchase',
+            'message': (
+                f"{current_repeat_stores} repeat and {current_single_stores} single-order store"
+                f"{'' if current_single_stores == 1 else 's'} produced a {current_repeat:.1f}% repeat rate."
+            ),
+        },
+    })
+    signals.append({
+        'signal_type': 'inventory_and_distribution',
+        'evidence': {
+            'title': 'Inventory and Distribution',
+            'message': (
+                f"{current_stores} active stores supplied the period; inventory is {inventory_status}"
+                + (f" with {stock_days:.1f} days of cover." if stock_days > 0 else '.')
+            ),
+        },
+    })
+
+    recommended_actions = []
+    if inventory_status in {'Watch', 'Low Stock'} or (stock_days > 0 and stock_days < 7):
+        recommended_actions.append('Restock the fastest-moving SKUs before the next trading cycle.')
+    if previous_history_row and revenue_delta is not None and revenue_delta < 0:
+        recommended_actions.append(f"Recover lost volume in the outlets that performed strongest in the {compare_label}.")
+    if current_repeat < 35 or current_single_stores > current_repeat_stores:
+        recommended_actions.append('Follow up one-time buyers to convert them into repeat orders.')
+    if top_store_pct >= 40 and top_store_name:
+        recommended_actions.append(f"Reduce concentration risk by widening distribution beyond {top_store_name}.")
+    if current_stores < 8:
+        recommended_actions.append('Increase active store count before the next comparable period closes.')
+    if not recommended_actions:
+        recommended_actions.append('Protect the current run rate and monitor the next comparable period closely.')
+
+    return {
+        'summary': {
+            'headline': headline,
+            'summary': ' '.join(part for part in summary_parts if part),
+            'recommended_actions': recommended_actions[:4],
+            'used_gemini': False,
+        },
+        'signals': signals[:3],
+        'action_items': [],
+        'recommendation_items': [],
+    }
+
+
 def _coach_summary_for_snapshot(snapshot: dict | None, persist: bool = True, use_gemini: bool = True) -> dict:
     if not snapshot:
         return {'summary': {'headline': 'Coach summary unavailable', 'summary': 'No data is available for this scope yet.', 'recommended_actions': [], 'used_gemini': False}, 'signals': [], 'action_items': [], 'recommendation_items': []}
@@ -1316,8 +1537,7 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             for attempt in range(max_retries):
                 try:
                     report_context = _brand_report_context(brand_name, cutoff_date=end_date)
-                    coach_snapshot = build_scope_snapshot(ds, 'brand', scope_key=brand_name, report_id=report_id, persist=True) if coach_history_available() else None
-                    coach = _coach_summary_for_snapshot(coach_snapshot, persist=True, use_gemini=False) if coach_snapshot else None
+                    coach = _report_summary_payload(brand_name, kpis, ds.get_report(report_id))
                     result_path = generate_pdf_html(
                         output_path=pdf_path,
                         brand_name=brand_name,
@@ -1350,8 +1570,7 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             for attempt in range(max_retries):
                 try:
                     report_context = _brand_report_context(brand_name, cutoff_date=end_date)
-                    coach_snapshot = build_scope_snapshot(ds, 'brand', scope_key=brand_name, report_id=report_id, persist=True) if coach_history_available() else None
-                    coach = _coach_summary_for_snapshot(coach_snapshot, persist=True, use_gemini=False) if coach_snapshot else None
+                    coach = _report_summary_payload(brand_name, kpis, ds.get_report(report_id))
                     generate_html(
                         output_path=html_path,
                         brand_name=brand_name,
@@ -2247,8 +2466,7 @@ def generate():
         check_and_save_alerts(report_id, brand_name, kpis,
                               portfolio_avg_revenue, history[1:], ds)
         report_context = _brand_report_context(brand_name, cutoff_date=end_date)
-        coach_snapshot = build_scope_snapshot(ds, 'brand', scope_key=brand_name, report_id=report_id, persist=True) if coach_history_available() else None
-        coach = _coach_summary_for_snapshot(coach_snapshot, persist=True, use_gemini=False) if coach_snapshot else None
+        coach = _report_summary_payload(brand_name, kpis, ds.get_report(report_id))
 
         # PDF
         try:
@@ -3075,8 +3293,7 @@ def _build_brand_report_pdf_bytes(report_id: int, brand_name: str,
     total_portfolio = sum(b['total_revenue'] for b in all_brand_kpis)
     avg_portfolio   = total_portfolio / max(len(all_brand_kpis), 1)
     report_context = _brand_report_context(brand_name, cutoff_date=report.get('end_date'))
-    coach_snapshot = build_scope_snapshot(ds, 'brand', scope_key=brand_name, report_id=report_id, persist=True) if coach_history_available() else None
-    coach = _coach_summary_for_snapshot(coach_snapshot, persist=True, use_gemini=False) if coach_snapshot else {'summary': {'headline': 'Coach summary unavailable', 'summary': 'No coach data available yet.', 'recommended_actions': [], 'used_gemini': False}, 'signals': [], 'action_items': [], 'recommendation_items': []}
+    coach = _report_summary_payload(brand_name, kpis, report)
 
     # Use the premium 2-page print template (report_template.html)
     html = render_pdf_report_html(
@@ -3107,8 +3324,11 @@ def _build_retailer_report_pdf_bytes(retailer_code: str, report_id: int | None =
 
 
 _REPORT_DEPENDENCY_PATHS = [
+    os.path.join(os.path.dirname(__file__), 'app.py'),
     os.path.join(os.path.dirname(__file__), 'templates', 'report_template.html'),
+    os.path.join(os.path.dirname(__file__), 'templates', 'report_interactive.html'),
     os.path.join(os.path.dirname(__file__), 'modules', 'pdf_generator_html.py'),
+    os.path.join(os.path.dirname(__file__), 'modules', 'html_generator.py'),
     os.path.join(os.path.dirname(__file__), 'modules', 'charts_html.py'),
     os.path.join(os.path.dirname(__file__), 'modules', 'predictor.py'),
 ]
@@ -3292,11 +3512,7 @@ def api_report_html(report_id, brand_name):
             month_label=report.get('month_label'),
             growth_outlook=report_context.get('growth_outlook'),
             gmv_window=report_context.get('gmv_window'),
-            coach=_coach_summary_for_snapshot(
-                build_scope_snapshot(ds, 'brand', scope_key=brand_name, report_id=report_id, persist=True),
-                persist=True,
-                use_gemini=False,
-            ) if coach_history_available() else None,
+            coach=_report_summary_payload(brand_name, kpis, report),
         )
     except Exception as e:
         return jsonify({'error': str(e)}), 500

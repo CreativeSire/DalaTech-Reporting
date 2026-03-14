@@ -1287,23 +1287,23 @@
 
   {% if coach and coach.summary %}
   <div class="coach-strip">
-    <div class="coach-strip-kicker">Sales Coach</div>
+    <div class="coach-strip-kicker">Summary</div>
     <div class="coach-strip-headline">{{ coach.summary.headline }}</div>
     <div class="coach-strip-summary">{{ coach.summary.summary }}</div>
     <div class="coach-strip-grid">
       <div class="coach-box">
-        <h4>Priority Actions</h4>
+        <h4>Recommended Actions</h4>
         <ul>{% for action in coach.summary.recommended_actions[:4] %}<li>{{ action }}</li>{% endfor %}</ul>
       </div>
       <div class="coach-box">
-        <h4>Open Signals</h4>
+        <h4>Key Signals</h4>
         {% for signal in coach.signals[:3] %}
         <div class="coach-signal">
           <strong>{{ signal.evidence.title }}</strong>
           <span>{{ signal.evidence.message }}</span>
         </div>
         {% else %}
-        <div class="coach-signal">No major coach signal is open for this brand in the selected period.</div>
+        <div class="coach-signal">No material signal is open for this report period.</div>
         {% endfor %}
       </div>
     </div>

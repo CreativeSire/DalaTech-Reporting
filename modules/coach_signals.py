@@ -395,16 +395,16 @@ def _strip_code_fence(text: str) -> str:
 def _deterministic_summary(snapshot: dict[str, Any], signals: list[dict[str, Any]]) -> dict[str, Any]:
     metrics = snapshot.get("metrics") or {}
     scope_type = snapshot.get("scope_type") or "portfolio"
-    scope_key = snapshot.get("scope_key") or "global"
     revenue = float(metrics.get("revenue") or 0)
-    headline = f"{scope_key} coach summary" if scope_type != "portfolio" else "Portfolio coach summary"
+    headline = "Portfolio summary" if scope_type == "portfolio" else "Performance summary"
     if signals:
         primary = signals[0]
         headline = primary["evidence"]["title"]
         summary = primary["evidence"]["message"]
     else:
+        scope_label = "the portfolio" if scope_type == "portfolio" else "this scope"
         summary = (
-            f"No major risk signal is open for {scope_key}. "
+            f"No major risk signal is open for {scope_label}. "
             f"Current revenue is ₦{revenue:,.2f} with repeat rate at {float(metrics.get('repeat_rate') or 0):.1f}%."
         )
     recommended_actions = []
