@@ -1232,6 +1232,75 @@ class DataStore:
                 payload[key[:-5]] = []
         return payload
 
+    def repair_swapped_dimension_rows(self, report_id=None):
+        clauses = []
+        params = []
+        if report_id is not None:
+            clauses.append("report_id=?")
+            params.append(report_id)
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ''
+
+        rows_scanned = 0
+        rows_repaired = 0
+        product_qty_cleared = 0
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM brand_detail_json {where_sql} ORDER BY report_id, brand_name",
+                params,
+            ).fetchall()
+
+            for row in rows:
+                rows_scanned += 1
+                detail = dict(row)
+                normalized = self._normalize_brand_detail_payload(detail)
+                if not normalized.get('_dimension_fix_applied'):
+                    continue
+
+                conn.execute(
+                    """UPDATE brand_detail_json
+                       SET top_stores_json=?, product_value_json=?, product_qty_json=?
+                       WHERE report_id=? AND brand_name=?""",
+                    (
+                        normalized.get('top_stores_json', '[]'),
+                        normalized.get('product_value_json', '[]'),
+                        normalized.get('product_qty_json', '[]'),
+                        detail['report_id'],
+                        detail['brand_name'],
+                    ),
+                )
+
+                top_stores = self._json_records(normalized.get('top_stores_json'))
+                if top_stores:
+                    top_record = top_stores[0]
+                    fixed_name = str(top_record.get('Store') or top_record.get('SKU') or '').strip()
+                    fixed_revenue = float(top_record.get('Revenue') or top_record.get('Total Revenue') or 0)
+                    if fixed_name:
+                        conn.execute(
+                            """UPDATE brand_kpis
+                               SET top_store_name=?, top_store_revenue=?
+                               WHERE report_id=? AND brand_name=?""",
+                            (
+                                fixed_name,
+                                fixed_revenue,
+                                detail['report_id'],
+                                self.normalize_brand_name(detail['brand_name']),
+                            ),
+                        )
+
+                if normalized.get('product_qty_json') == '[]':
+                    product_qty_cleared += 1
+                rows_repaired += 1
+
+            if rows_repaired:
+                conn.commit()
+
+        return {
+            'rows_scanned': rows_scanned,
+            'rows_repaired': rows_repaired,
+            'product_qty_cleared': product_qty_cleared,
+        }
+
     def persist_report_bundle(self, *, start_date, end_date, xls_filename,
                               total_revenue, total_qty, total_stores, report_type,
                               brand_payloads, workbook_brand_count=0,

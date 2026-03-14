@@ -22,7 +22,7 @@ Routes:
   GET  /api/reports         JSON list of all reports
 """
 
-import os, io, json, traceback, shutil, uuid, threading, tempfile, zipfile
+import os, io, json, traceback, shutil, uuid, threading, tempfile, zipfile, hashlib
 from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 from datetime import datetime
@@ -90,6 +90,47 @@ os.makedirs(PDF_DIR,  exist_ok=True)
 os.makedirs(HTML_DIR, exist_ok=True)
 
 ds = DataStore()
+REPORT_SOURCE_DIR = os.path.join(os.path.dirname(ds.db_path), 'report_sources')
+os.makedirs(REPORT_SOURCE_DIR, exist_ok=True)
+
+
+def _archive_report_source(file_bytes, report_id, filename):
+    safe_name = ''.join(ch if ch.isalnum() or ch in ('-', '_', '.') else '_' for ch in os.path.basename(filename or 'report.xlsx'))
+    path = os.path.join(REPORT_SOURCE_DIR, f"{report_id}_{safe_name}")
+    with open(path, 'wb') as handle:
+        handle.write(file_bytes)
+    return {
+        'path': path,
+        'size_bytes': len(file_bytes or b''),
+        'sha1': hashlib.sha1(file_bytes or b'').hexdigest(),
+    }
+
+
+def _run_startup_data_repairs():
+    try:
+        summary = ds.repair_swapped_dimension_rows()
+        if summary.get('rows_repaired'):
+            ds.save_agent_memory(
+                scope_type='workspace',
+                scope_key='report-integrity',
+                memory_text=(
+                    f"Repaired {summary['rows_repaired']} historical brand detail row(s) after the retailer/SKU schema fix."
+                ),
+                memory_kind='repair',
+                confidence=0.95,
+                source='startup_repair',
+                memory_layer='workspace',
+                subject_type='workspace',
+                subject_key='report-integrity',
+                tags=['repair', 'schema', 'imports'],
+                metadata=summary,
+                pinned=True,
+            )
+    except Exception:
+        pass
+
+
+threading.Thread(target=_run_startup_data_repairs, daemon=True).start()
 GENERATION_WORKERS = max(1, int(os.environ.get('GENERATION_WORKERS', '2') or '2'))
 GENERATION_EXECUTOR = ThreadPoolExecutor(max_workers=GENERATION_WORKERS)
 
@@ -1474,6 +1515,37 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
         )
         report_meta = ds.get_report(report_id) or {}
         import_audit = ds.get_report_import_audit(report_id) or {}
+        source_meta = _archive_report_source(file_bytes, report_id, filename)
+        ds.save_agent_memory(
+            scope_type='report',
+            scope_key=str(report_id),
+            memory_text=(
+                f"Imported {filename} for {start_date} to {end_date}. "
+                f"Workbook brands: {import_audit.get('workbook_brand_count', len(workbook_brands))}; "
+                f"active brands: {import_audit.get('active_brand_count', len(active_brands))}; "
+                f"persisted brands: {import_audit.get('persisted_brand_count', len(brands))}."
+            ),
+            memory_kind='import_audit',
+            confidence=0.98,
+            source='report_import',
+            memory_layer='workspace',
+            subject_type='report',
+            subject_key=str(report_id),
+            related_report_id=report_id,
+            tags=['import', 'audit', 'source-workbook'],
+            metadata={
+                'file_name': filename,
+                'start_date': start_date,
+                'end_date': end_date,
+                'workbook_brand_count': import_audit.get('workbook_brand_count', len(workbook_brands)),
+                'active_brand_count': import_audit.get('active_brand_count', len(active_brands)),
+                'persisted_brand_count': import_audit.get('persisted_brand_count', len(brands)),
+                'zero_sales_brands': import_audit.get('zero_sales_brands', zero_sales_brands),
+                'source_file_path': source_meta['path'],
+                'source_file_size_bytes': source_meta['size_bytes'],
+                'source_file_sha1': source_meta['sha1'],
+            },
+        )
         _upd(report_id=report_id, progress=24)
         _queue_catalog_candidates(catalog_df, source_filename=filename, report_id=report_id)
 

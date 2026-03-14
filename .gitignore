@@ -26,6 +26,7 @@ env/
 
 # Generated output (large files, regenerated on demand)
 output/
+report_sources/
 
 # Extracted data files (raw Tally exports)
 extracted/
