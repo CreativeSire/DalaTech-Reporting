@@ -25,7 +25,6 @@ _CSV_CHUNKSIZE = 50_000
 # ── Column rename map: Raw Tally → Standard schema ──────────────────────────
 COLUMN_RENAME_MAP = {
     'Brand Partners': 'Brand Partner',
-    'Retailers':      'SKUs',
     'Value':          'Sales_Value',
 }
 
@@ -35,6 +34,111 @@ VCH_AVAILABLE_INVENTORY = 'Available Inventory'
 VCH_INVENTORY_PICKUP    = 'Inventory Pickup by Dala'
 VCH_INVENTORY_SUPPLIED  = 'Inventory Supplied by Brands'
 VCH_JOURNAL             = 'Journal'
+
+_STORE_HINTS = (
+    'supermarket', 'hypermart', 'hypermarket', 'market', 'mart', 'mall',
+    'shop', 'stores', 'store', 'plaza', 'freedom way', 'road', 'rd',
+    'ikeja', 'lekki', 'gbagada', 'magodo', 'maryland', 'orchid', 'ogombo',
+    'chisco', 'eleganza', 'victory park', 'ajah', 'ikota', 'sangotedo',
+)
+_SKU_HINTS = (
+    '(12x)', '(24x)', '(6x)', '500ml', '330ml', '1ltr', '1.5ltr', '2ltr',
+    'kg', 'gram', 'g ', 'yoghurt', 'yogurt', 'oil', 'soap', 'tea', 'juice',
+    'drink', 'water', 'chips', 'crisps', 'carrot', 'coconut', 'vanilla',
+    'strawberry', 'greek', 'protein', 'unsweet', 'sweetend', 'sweetened',
+)
+
+
+def looks_like_store_label(value) -> bool:
+    text = str(value or '').strip().lower()
+    if not text:
+        return False
+    score = 0
+    if ',' in text:
+        score += 1
+    if any(hint in text for hint in _STORE_HINTS):
+        score += 2
+    if any(hint in text for hint in _SKU_HINTS):
+        score -= 2
+    if any(ch.isdigit() for ch in text):
+        score -= 0.5
+    return score >= 2
+
+
+def looks_like_sku_label(value) -> bool:
+    text = str(value or '').strip().lower()
+    if not text:
+        return False
+    score = 0
+    if any(hint in text for hint in _SKU_HINTS):
+        score += 2
+    if any(ch.isdigit() for ch in text):
+        score += 1
+    if 'x)' in text or 'ml' in text or 'ltr' in text:
+        score += 1
+    if ',' in text:
+        score -= 1
+    if any(hint in text for hint in _STORE_HINTS):
+        score -= 2
+    return score >= 2
+
+
+def _sample_texts(series, limit=40):
+    if series is None:
+        return []
+    values = []
+    for value in series.dropna().astype(str):
+        text = value.strip()
+        if not text:
+            continue
+        values.append(text)
+        if len(values) >= limit:
+            break
+    return values
+
+
+def _columns_look_swapped(df) -> bool:
+    if 'Particulars' not in df.columns or 'SKUs' not in df.columns or df.empty:
+        return False
+    particulars = _sample_texts(df['Particulars'])
+    skus = _sample_texts(df['SKUs'])
+    if not particulars or not skus:
+        return False
+    particulars_store_ratio = sum(1 for value in particulars if looks_like_store_label(value)) / len(particulars)
+    particulars_sku_ratio = sum(1 for value in particulars if looks_like_sku_label(value)) / len(particulars)
+    skus_store_ratio = sum(1 for value in skus if looks_like_store_label(value)) / len(skus)
+    skus_sku_ratio = sum(1 for value in skus if looks_like_sku_label(value)) / len(skus)
+    return (
+        skus_store_ratio >= 0.45 and
+        particulars_sku_ratio >= 0.45 and
+        skus_store_ratio > particulars_store_ratio and
+        particulars_sku_ratio > skus_sku_ratio
+    )
+
+
+def _swap_dimension_columns(df):
+    swapped = df.copy()
+    if 'Particulars' not in swapped.columns or 'SKUs' not in swapped.columns:
+        return swapped
+    swapped = swapped.rename(columns={'Particulars': '__tmp_particulars__', 'SKUs': 'Particulars'})
+    swapped = swapped.rename(columns={'__tmp_particulars__': 'SKUs'})
+    return swapped
+
+
+def normalize_dimension_columns(df):
+    normalized = df.rename(columns=COLUMN_RENAME_MAP).copy()
+
+    if 'Retailers' in normalized.columns and 'SKUs' not in normalized.columns:
+        if 'Particulars' in normalized.columns:
+            normalized = normalized.rename(columns={'Particulars': '__tmp_sku__', 'Retailers': 'Particulars'})
+            normalized = normalized.rename(columns={'__tmp_sku__': 'SKUs'})
+        else:
+            normalized = normalized.rename(columns={'Retailers': 'Particulars'})
+
+    if _columns_look_swapped(normalized):
+        normalized = _swap_dimension_columns(normalized)
+
+    return normalized
 
 
 def _is_csv(file_source):
@@ -108,7 +212,7 @@ def load_and_clean(file_source):
         chunks = []
         for chunk in pd.read_csv(file_source, chunksize=_CSV_CHUNKSIZE,
                                   low_memory=False, encoding='utf-8-sig'):
-            chunk = chunk.rename(columns=COLUMN_RENAME_MAP)
+            chunk = normalize_dimension_columns(chunk)
             chunks.append(chunk)
         df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
     else:
@@ -119,7 +223,7 @@ def load_and_clean(file_source):
             if hasattr(file_source, 'seek'):
                 file_source.seek(0)
             df = pd.read_excel(file_source, engine='xlrd')
-        df = df.rename(columns=COLUMN_RENAME_MAP)
+        df = normalize_dimension_columns(df)
 
     required_cols = [
         'Brand Partner', 'SKUs', 'Date', 'Particulars',
@@ -229,6 +333,7 @@ def load_brand_file(file_source, brand_name: str) -> pd.DataFrame:
     data.columns = col_labels
 
     data = data.rename(columns={'item name': 'SKUs', 'Value': 'Sales_Value'})
+    data = normalize_dimension_columns(data)
     data['Brand Partner'] = brand_name
 
     data = data.dropna(subset=['SKUs', 'Date', 'Sales_Value'], how='all')

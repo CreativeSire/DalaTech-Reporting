@@ -7,6 +7,8 @@ consume the dict returned by calculate_kpis().
 
 import pandas as pd
 
+from .ingestion import looks_like_store_label, normalize_dimension_columns
+
 VCH_SALES               = 'Sales'
 VCH_AVAILABLE_INVENTORY = 'Available Inventory'
 VCH_INVENTORY_PICKUP    = 'Inventory Pickup by Dala'
@@ -25,6 +27,8 @@ def calculate_kpis(brand_df):
     Returns:
         dict with every metric needed by the PDF generator and chart module.
     """
+    brand_df = normalize_dimension_columns(brand_df)
+
     sales      = brand_df[brand_df['Vch Type'] == VCH_SALES].copy()
     avail_inv  = brand_df[brand_df['Vch Type'] == VCH_AVAILABLE_INVENTORY].copy()
     inv_pickup = brand_df[brand_df['Vch Type'] == VCH_INVENTORY_PICKUP].copy()
@@ -98,6 +102,13 @@ def calculate_kpis(brand_df):
     else:
         top_sku = 'N/A'
         top_sku_qty = 0
+
+    if not product_value.empty:
+        top_sku_value_name = product_value.iloc[0]['SKU']
+        top_sku_value = product_value.iloc[0]['Revenue']
+    else:
+        top_sku_value_name = 'N/A'
+        top_sku_value = 0
 
     # ── Reorder Analysis ──────────────────────────────────────────────────────
     reorder_df    = _calculate_reorders(sales)
@@ -217,6 +228,8 @@ def calculate_kpis(brand_df):
         'top_store_pct':     top_store_pct,
         'top_sku':           top_sku,
         'top_sku_qty':       top_sku_qty,
+        'top_sku_value_name': top_sku_value_name,
+        'top_sku_value':      top_sku_value,
         'peak_date':         peak_date,
         'peak_revenue':      peak_revenue,
         'peak_qty':          peak_qty,
@@ -552,11 +565,29 @@ def generate_narrative(brand_name, kpis, start_date, end_date):
         f"Average revenue per store closed at {fmt(kpis['avg_revenue_per_store'])}."
     )
 
-    s2 = (
-        f"The strongest outlet was {kpis['top_store_name']}, contributing "
-        f"{kpis['top_store_pct']:.1f}% of sales worth {fmt(kpis['top_store_revenue'])}. "
-        f"The leading SKU by volume was {kpis['top_sku']}, with {fmt_qty(kpis['top_sku_qty'])} packs sold."
-    )
+    top_store_name = str(kpis.get('top_store_name') or '').strip()
+    top_sku_name = str(kpis.get('top_sku') or '').strip()
+    top_sku_qty = float(kpis.get('top_sku_qty', 0) or 0)
+    top_sku_value_name = str(kpis.get('top_sku_value_name') or '').strip()
+    top_sku_value = float(kpis.get('top_sku_value', 0) or 0)
+
+    s2_bits = []
+    if top_store_name and top_store_name not in {'-', 'N/A'}:
+        s2_bits.append(
+            f"The strongest outlet was {top_store_name}, contributing "
+            f"{kpis['top_store_pct']:.1f}% of sales worth {fmt(kpis['top_store_revenue'])}."
+        )
+
+    if top_sku_name and top_sku_name not in {'-', 'N/A'} and top_sku_qty > 0 and not looks_like_store_label(top_sku_name):
+        s2_bits.append(
+            f"The leading SKU by volume was {top_sku_name}, with {fmt_qty(top_sku_qty)} packs sold."
+        )
+    elif top_sku_value_name and top_sku_value_name not in {'-', 'N/A'} and top_sku_value > 0 and not looks_like_store_label(top_sku_value_name):
+        s2_bits.append(
+            f"The strongest SKU by value was {top_sku_value_name}, contributing {fmt(top_sku_value)}."
+        )
+
+    s2 = ' '.join(s2_bits)
 
     if kpis['peak_date'] is not None:
         s3 = (

@@ -39,7 +39,10 @@ from flask import (
 # This fixes the multi-worker bug where in-memory dicts don't survive across gunicorn workers.
 _JOBS = {}   # kept for legacy compatibility only — new code uses ds.get_job()
 
-from modules.ingestion        import load_and_clean, filter_by_date, split_by_brand
+from modules.ingestion        import (
+    load_and_clean, filter_by_date, split_by_brand,
+    looks_like_store_label, looks_like_sku_label,
+)
 from modules.kpi              import calculate_kpis, calculate_perf_score, generate_narrative, build_reorder_trend
 from modules.pdf_generator_html import generate_pdf_html
 from modules.pdf_generator      import generate_pdf as generate_pdf_reportlab
@@ -3200,9 +3203,16 @@ def _reconstruct_kpis_from_db(report_id: int, brand_name: str) -> dict:
     reorder_df       = _load_df(detail.get('reorder_json'),       [])
     heatmap_df       = _load_df(detail.get('heatmap_json'),       ['Store', 'Date', 'Orders'])
 
+    if not product_qty_df.empty:
+        top_qty_label = str(product_qty_df.iloc[0].get('SKU') or '').strip()
+        if top_qty_label and looks_like_store_label(top_qty_label) and not looks_like_sku_label(top_qty_label):
+            product_qty_df = pd.DataFrame(columns=['SKU', 'Quantity'])
+
     # Derive top SKU from product_qty
     top_sku     = product_qty_df.iloc[0]['SKU']     if not product_qty_df.empty else '-'
     top_sku_qty = product_qty_df.iloc[0]['Quantity'] if not product_qty_df.empty else 0
+    top_sku_value_name = product_value_df.iloc[0]['SKU'] if not product_value_df.empty else '-'
+    top_sku_value = product_value_df.iloc[0]['Revenue'] if not product_value_df.empty else 0
     peak_date = bk.get('peak_date')
     peak_qty = 0
     if peak_date:
@@ -3276,6 +3286,8 @@ def _reconstruct_kpis_from_db(report_id: int, brand_name: str) -> dict:
         'weekly_qty_pct':        weekly_qty_pct,
         'top_sku':               top_sku,
         'top_sku_qty':           top_sku_qty,
+        'top_sku_value_name':    top_sku_value_name,
+        'top_sku_value':         top_sku_value,
         'total_pickup_qty':      pickup_df['Qty Picked Up'].sum()  if not pickup_df.empty else 0,
         'total_pickup_value':    pickup_df['Value'].sum()          if not pickup_df.empty else 0,
         'total_supplied_qty':    supply_df['Qty Supplied'].sum()   if not supply_df.empty else 0,

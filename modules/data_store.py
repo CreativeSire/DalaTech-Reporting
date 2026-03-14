@@ -22,6 +22,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 
 from .brand_names import canonicalize_brand_name, normalize_brand_compare_key, normalize_name_key
+from .ingestion import looks_like_sku_label, looks_like_store_label
 
 # Allow overriding via env var so a Railway Volume can be used for persistence.
 # On Railway: set DATABASE_PATH=/data/dala_data.db and mount a Volume at /data
@@ -124,6 +125,104 @@ class DataStore:
         if (left_norm in right_norm or right_norm in left_norm) and overlap >= 0.5:
             return round(max(seq, 0.9), 4)
         return round(max(seq, (seq * 0.7) + (overlap * 0.3)), 4)
+
+    @staticmethod
+    def _json_records(payload):
+        try:
+            records = json.loads(payload or '[]')
+            return records if isinstance(records, list) else []
+        except Exception:
+            return []
+
+    @staticmethod
+    def _dump_json_records(records):
+        return json.dumps(list(records or []))
+
+    @staticmethod
+    def _first_named_value(records, keys):
+        for record in records or []:
+            for key in keys:
+                value = str(record.get(key) or '').strip()
+                if value:
+                    return value
+        return ''
+
+    @staticmethod
+    def _remap_records(records, source_key, target_key):
+        mapped = []
+        for record in records or []:
+            name = str(record.get(source_key) or record.get(target_key) or '').strip()
+            if not name:
+                continue
+            clone = dict(record)
+            clone.pop(source_key, None)
+            clone[target_key] = name
+            mapped.append(clone)
+        return mapped
+
+    def _detail_payload_needs_dimension_fix(self, detail):
+        top_stores = self._json_records(detail.get('top_stores_json'))
+        product_value = self._json_records(detail.get('product_value_json'))
+        product_qty = self._json_records(detail.get('product_qty_json'))
+
+        top_store_sample = self._first_named_value(top_stores, ('Store', 'SKU'))
+        product_value_sample = self._first_named_value(product_value, ('SKU', 'Store'))
+        product_qty_sample = self._first_named_value(product_qty, ('SKU', 'Store'))
+
+        return (
+            bool(top_store_sample) and
+            looks_like_sku_label(top_store_sample) and
+            (
+                (product_value_sample and looks_like_store_label(product_value_sample)) or
+                (product_qty_sample and looks_like_store_label(product_qty_sample))
+            )
+        )
+
+    def _normalize_brand_detail_payload(self, detail):
+        normalized = dict(detail or {})
+        if not normalized or not self._detail_payload_needs_dimension_fix(normalized):
+            return normalized
+
+        top_stores = self._json_records(normalized.get('top_stores_json'))
+        product_value = self._json_records(normalized.get('product_value_json'))
+        product_qty = self._json_records(normalized.get('product_qty_json'))
+
+        normalized['top_stores_json'] = self._dump_json_records(
+            self._remap_records(product_value, 'SKU', 'Store')
+        )
+        normalized['product_value_json'] = self._dump_json_records(
+            self._remap_records(top_stores, 'Store', 'SKU')
+        )
+
+        corrected_qty = [
+            dict(record) for record in product_qty
+            if looks_like_sku_label(record.get('SKU') or record.get('Store') or '')
+        ]
+        normalized['product_qty_json'] = self._dump_json_records(corrected_qty)
+        normalized['_dimension_fix_applied'] = True
+        return normalized
+
+    def _normalize_brand_kpi_row(self, row):
+        normalized = dict(row or {})
+        top_store_name = str(normalized.get('top_store_name') or '').strip()
+        if top_store_name and looks_like_store_label(top_store_name):
+            return normalized
+
+        detail = self.get_brand_detail_json(normalized.get('report_id'), normalized.get('brand_name'))
+        if not detail:
+            return normalized
+
+        top_stores = self._json_records(detail.get('top_stores_json'))
+        if not top_stores:
+            return normalized
+
+        top_record = top_stores[0]
+        fixed_name = str(top_record.get('Store') or top_record.get('SKU') or '').strip()
+        fixed_revenue = float(top_record.get('Revenue') or top_record.get('Total Revenue') or 0)
+        if fixed_name and looks_like_store_label(fixed_name):
+            normalized['top_store_name'] = fixed_name
+            normalized['top_store_revenue'] = fixed_revenue
+        return normalized
 
     def _connect(self):
         conn = sqlite3.connect(self.db_path)
@@ -1500,7 +1599,7 @@ class DataStore:
         if not rows:
             return None
         if len(rows) == 1:
-            return dict(rows[0])
+            return self._normalize_brand_detail_payload(dict(rows[0]))
 
         json_fields = (
             'top_stores_json', 'product_value_json', 'product_qty_json',
@@ -1519,7 +1618,7 @@ class DataStore:
                 except Exception:
                     continue
             merged[field] = json.dumps(records)
-        return merged
+        return self._normalize_brand_detail_payload(merged)
 
     def get_brand_history(self, brand_name, limit=12, report_type=None):
         """Return canonical brand KPIs across reports, newest first."""
@@ -1536,7 +1635,8 @@ class DataStore:
                 params.append(report_type)
             query += " ORDER BY r.start_date DESC"
             rows = conn.execute(query, params).fetchall()
-        merged = self._merge_brand_kpi_rows([dict(r) for r in rows], order_desc=True)
+        normalized_rows = [self._normalize_brand_kpi_row(dict(r)) for r in rows]
+        merged = self._merge_brand_kpi_rows(normalized_rows, order_desc=True)
         return merged[:limit]
 
     def get_all_brand_kpis(self, report_id):
@@ -1546,7 +1646,8 @@ class DataStore:
                 "SELECT * FROM brand_kpis WHERE report_id=? ORDER BY total_revenue DESC",
                 (report_id,)
             ).fetchall()
-        return self._merge_brand_kpi_rows([dict(r) for r in rows], order_desc=True)
+        normalized_rows = [self._normalize_brand_kpi_row(dict(r)) for r in rows]
+        return self._merge_brand_kpi_rows(normalized_rows, order_desc=True)
 
     def get_brand_kpis_single(self, report_id, brand_name):
         target_name = self.analytics_brand_name(brand_name)
