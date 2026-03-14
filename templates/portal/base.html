@@ -616,11 +616,18 @@ document.querySelectorAll('.nav-link').forEach(l => l.addEventListener('click', 
   }
 
   async function refreshState(options) {
-    const query = buildContextQuery();
-    const res = await fetch(`/api/copilot/state${query ? `?${query}` : ''}`, { headers: { 'X-Requested-With': 'fetch' } });
-    const data = await res.json();
-    if (!data.success) return;
-    applyState(data, options || {});
+    try {
+      const query = buildContextQuery();
+      const res = await fetch(`/api/copilot/state${query ? `?${query}` : ''}`, { headers: { 'X-Requested-With': 'fetch' } });
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (!data.success) return false;
+      applyState(data, options || {});
+      return true;
+    } catch (err) {
+      console.debug('Copilot state refresh skipped', err);
+      return false;
+    }
   }
 
   async function updateAction(actionId, verb) {
