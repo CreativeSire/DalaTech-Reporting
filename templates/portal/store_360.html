@@ -2,33 +2,324 @@
 {% block title %}Retailer Intelligence - DALA Analytics{% endblock %}
 {% block page_title %}Retailer Intelligence{% endblock %}
 
-{% block head_extra %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
-  .retailer-shell { display:flex; flex-direction:column; gap:20px; }
-  .retailer-hero { display:flex; justify-content:space-between; gap:20px; flex-wrap:wrap; align-items:flex-start; }
-  .retailer-hero h3 { margin-bottom:6px; color:var(--navy); }
-  .retailer-hero .meta { color:var(--muted); font-size:13px; }
-  .coach-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
-  .signal-list { display:flex; flex-direction:column; gap:10px; }
-  .signal-item { padding:12px 14px; border-radius:12px; border:1px solid rgba(27,43,94,.08); background:#f8faff; }
-  .signal-item h5 { margin:0 0 4px 0; color:var(--navy); font-size:14px; }
-  .signal-item p { margin:0; color:var(--muted); font-size:13px; }
-  .retailer-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:20px; }
-  .mini-table { width:100%; border-collapse:collapse; }
-  .mini-table td, .mini-table th { padding:10px 0; border-bottom:1px solid var(--gray); font-size:13px; text-align:left; }
-  .opportunity-list { display:flex; flex-direction:column; gap:10px; }
-  .opportunity-item { display:flex; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--gray); }
-  .coach-evidence { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
-  .coach-reco-list { display:flex; flex-direction:column; gap:10px; margin-top:10px; }
-  .coach-reco-item { padding:10px 12px; border-radius:12px; border:1px solid var(--gray); background:#fbfcff; }
-  .coach-reco-meta { display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; }
-  .coach-reco-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .retailer-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  .retailer-hero-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(280px, .8fr);
+    gap: 22px;
+    padding: 28px;
+    border-radius: 24px;
+    background:
+      radial-gradient(circle at top right, rgba(46, 134, 193, .14), transparent 36%),
+      linear-gradient(140deg, #ffffff 0%, #f8fbff 56%, #f2f6ff 100%);
+    border: 1px solid rgba(27, 43, 94, .08);
+    box-shadow: 0 24px 56px rgba(18, 29, 68, .09);
+  }
+  .retailer-kicker {
+    font-size: 11px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    font-weight: 800;
+    color: var(--blue);
+  }
+  .retailer-hero-title {
+    margin: 10px 0 12px;
+    color: var(--navy);
+    font-size: 38px;
+    line-height: 1.05;
+    max-width: 820px;
+  }
+  .retailer-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .retailer-meta-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(27, 43, 94, .08);
+    background: rgba(255, 255, 255, .72);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--navy);
+  }
+  .retailer-meta-pill.muted {
+    color: var(--muted);
+  }
+  .retailer-hero-copy {
+    max-width: 720px;
+    color: var(--muted);
+    line-height: 1.75;
+  }
+  .retailer-hero-actions,
+  .coach-primary-actions,
+  .coach-utility-actions,
+  .coach-reco-actions,
+  .activity-empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .retailer-hero-actions {
+    margin-top: 18px;
+  }
+  .retailer-score-card {
+    position: relative;
+    overflow: hidden;
+    padding: 22px;
+    border-radius: 20px;
+    background: linear-gradient(160deg, #19285d 0%, #203572 100%);
+    color: #fff;
+    box-shadow: 0 22px 48px rgba(18, 29, 68, .18);
+  }
+  .retailer-score-card::after {
+    content: "";
+    position: absolute;
+    inset: auto -36px -58px auto;
+    width: 180px;
+    height: 180px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .08);
+  }
+  .retailer-score-card .label {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, .72);
+  }
+  .retailer-score-card .score {
+    font-size: 56px;
+    line-height: 1;
+    font-weight: 800;
+    margin: 10px 0 6px;
+  }
+  .retailer-score-card .band {
+    display: inline-flex;
+    padding: 7px 12px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .12);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .retailer-score-card .note {
+    margin-top: 18px;
+    color: rgba(255, 255, 255, .82);
+    line-height: 1.65;
+    font-size: 13px;
+  }
+  .retailer-score-track {
+    margin-top: 16px;
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .14);
+    overflow: hidden;
+  }
+  .retailer-score-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #6de2a6 0%, #38b6ff 100%);
+  }
+  .retailer-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .retailer-kpi-card {
+    padding: 20px 22px;
+  }
+  .retailer-kpi-foot {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .retailer-core-grid,
+  .retailer-section-grid,
+  .retailer-activity-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(320px, .9fr);
+    gap: 18px;
+  }
+  .retailer-core-grid {
+    align-items: stretch;
+  }
+  .retailer-panel {
+    padding: 24px;
+    border-radius: 20px;
+    background: #fff;
+    border: 1px solid rgba(27, 43, 94, .08);
+    box-shadow: 0 18px 42px rgba(18, 29, 68, .07);
+  }
+  .retailer-panel h4 {
+    color: var(--navy);
+    font-size: 22px;
+    margin-bottom: 6px;
+  }
+  .retailer-panel-copy {
+    color: var(--muted);
+    line-height: 1.7;
+    margin-bottom: 16px;
+  }
+  .coach-signal-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 14px 0 18px;
+  }
+  .coach-reco-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .coach-reco-item {
+    padding: 14px 16px;
+    border-radius: 16px;
+    border: 1px solid rgba(27, 43, 94, .08);
+    background: linear-gradient(180deg, #ffffff 0%, #fbfcff 100%);
+  }
+  .coach-reco-item strong {
+    display: block;
+    color: var(--navy);
+    font-size: 17px;
+    margin-bottom: 8px;
+  }
+  .coach-reco-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .coach-status {
+    min-height: 18px;
+    margin-top: 12px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .retailer-insight-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .retailer-insight-item {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 12px;
+    align-items: start;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--gray);
+  }
+  .retailer-insight-item:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+  .retailer-insight-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #eef3ff;
+    color: var(--navy);
+    font-weight: 800;
+  }
+  .retailer-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .retailer-table th,
+  .retailer-table td {
+    padding: 14px 0;
+    border-bottom: 1px solid var(--gray);
+    text-align: left;
+    vertical-align: top;
+  }
+  .retailer-table th {
+    font-size: 11px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .retailer-table td .sub {
+    margin-top: 5px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .retailer-table td .value {
+    font-weight: 700;
+    color: var(--navy);
+  }
+  .activity-stream {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .activity-item {
+    padding: 14px 16px;
+    border-radius: 16px;
+    border: 1px solid rgba(27, 43, 94, .08);
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  }
+  .activity-item strong {
+    display: block;
+    color: var(--navy);
+    margin-bottom: 4px;
+  }
+  .activity-meta {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .activity-empty {
+    padding: 24px;
+    border-radius: 18px;
+    border: 1px dashed rgba(27, 43, 94, .14);
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    color: var(--muted);
+    line-height: 1.75;
+  }
+  @media (max-width: 1200px) {
+    .retailer-hero-card,
+    .retailer-core-grid,
+    .retailer-section-grid,
+    .retailer-activity-grid {
+      grid-template-columns: 1fr;
+    }
+    .retailer-kpi-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 720px) {
+    .retailer-kpi-grid {
+      grid-template-columns: 1fr;
+    }
+    .retailer-hero-title {
+      font-size: 30px;
+    }
+    .coach-reco-meta {
+      align-items: flex-start;
+    }
+  }
 </style>
 {% endblock %}
 
 {% block topbar_actions %}
-<a class="btn btn-outline btn-sm" target="_blank" href="{{ url_for('api_retailer_report_html', retailer_code=retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open Report</a>
-<a class="btn btn-primary btn-sm" href="{{ url_for('api_retailer_report_pdf', retailer_code=retailer_code, month=selected_month, report_id=report.id if report else None) }}">Download PDF</a>
+<a class="btn btn-outline btn-sm" href="{{ clean_url_for('activity_intelligence', store=retailer_code, report_id=report.id if report else None) }}">View Activity</a>
+<a class="btn btn-outline btn-sm" target="_blank" href="{{ clean_url_for('retailer_report_page', retailer_code=retailer_code, month=selected_month, report_id=report.id if report else None) }}">Interactive Report</a>
+<a class="btn btn-primary btn-sm" href="{{ clean_url_for('api_retailer_report_pdf', retailer_code=retailer_code, month=selected_month, report_id=report.id if report else None) }}">Download PDF</a>
 {% endblock %}
 
 {% block content %}
@@ -36,144 +327,192 @@
 <div class="card"><p class="text-muted">No retailer intelligence is available for this store yet.</p></div>
 {% else %}
 <div class="retailer-shell">
-  <div class="card">
-    <div class="retailer-hero">
-      <div>
-        <h3>{{ detail.retailer_name }}</h3>
-        <div class="meta">{{ detail.profile.city or detail.activity.store.retailer_city or 'Unknown city' }}{% if detail.profile.state or detail.activity.store.retailer_state %}, {{ detail.profile.state or detail.activity.store.retailer_state }}{% endif %}</div>
-        <div class="meta">{{ detail.period_label }}{% if detail.report_id %} · Report {{ detail.report_id }}{% endif %}</div>
+  <section class="retailer-hero-card">
+    <div>
+      <div class="retailer-kicker">Retailer Intelligence</div>
+      <h3 class="retailer-hero-title">{{ detail.retailer_name }}</h3>
+      <div class="retailer-meta-row">
+        <span class="retailer-meta-pill">{{ detail.location_label }}</span>
+        <span class="retailer-meta-pill muted">{{ detail.period_label }}</span>
+        {% if detail.report_id %}
+        <span class="retailer-meta-pill muted">Report {{ detail.report_id }}</span>
+        {% endif %}
+        <span class="retailer-meta-pill {% if detail.activity_available %}badge-green{% else %}badge-muted{% endif %}">
+          {% if detail.activity_available %}Activity linked{% else %}No linked field activity{% endif %}
+        </span>
       </div>
-      <div class="coach-actions">
-        <a class="btn btn-outline btn-sm" href="{{ url_for('retailers', month=selected_month, report_id=report.id if report else None) }}">Back to Retailers</a>
-        <a class="btn btn-outline btn-sm" href="{{ url_for('api_coach_summary', scope_type='retailer', scope_key=retailer_code, month=selected_month, report_id=report.id if report else None) }}" target="_blank">Coach API</a>
+      <div class="retailer-hero-copy">
+        {{ coach.summary.summary }}
+      </div>
+      <div class="retailer-hero-actions">
+        <a class="btn btn-outline" href="{{ clean_url_for('retailers', month=selected_month, report_id=report.id if report else None) }}">Back to Retailers</a>
+        <a class="btn btn-outline" href="{{ clean_url_for('activity_intelligence', store=retailer_code, report_id=report.id if report else None) }}">Activity Intelligence</a>
       </div>
     </div>
-  </div>
 
-  <div class="grid-4">
-    <div class="kpi-card blue">
+    <aside class="retailer-score-card">
+      <div class="label">Operating Score</div>
+      <div class="score">{{ "{:,.1f}".format(detail.health_score) }}</div>
+      <div class="band">{{ detail.health_band }}</div>
+      <div class="retailer-score-track">
+        <div class="retailer-score-fill" style="width:{{ detail.health_score }}%;"></div>
+      </div>
+      <div class="note">
+        Revenue {{ "%+.1f"|format(detail.comparisons.revenue_mom or 0) if detail.comparisons.revenue_mom is not none else 'N/A' }}
+        versus prior period with {{ "{:,.1f}".format(detail.metrics.repeat_rate or 0) }}% repeat depth and {{ detail.metrics.active_brands or 0 }} active brands.
+      </div>
+    </aside>
+  </section>
+
+  <section class="retailer-kpi-grid">
+    <div class="kpi-card blue retailer-kpi-card">
       <div class="kpi-label">Retailer Revenue</div>
       <div class="kpi-value-sm">₦{{ "{:,.2f}".format(detail.metrics.revenue or 0) }}</div>
-      <div class="kpi-sub">{{ detail.period_label }}</div>
+      <div class="retailer-kpi-foot">
+        {% if detail.comparisons.revenue_mom is not none %}
+        {{ "%+.1f"|format(detail.comparisons.revenue_mom) }}% versus the comparable prior period
+        {% else %}
+        Prior-period comparison is not available yet
+        {% endif %}
+      </div>
     </div>
-    <div class="kpi-card">
+    <div class="kpi-card retailer-kpi-card">
       <div class="kpi-label">Brand Mix</div>
       <div class="kpi-value-sm">{{ detail.metrics.active_brands or 0 }}</div>
-      <div class="kpi-sub">{{ detail.metrics.unique_skus or 0 }} SKUs active</div>
+      <div class="retailer-kpi-foot">{{ detail.metrics.unique_skus or 0 }} SKUs active in-store</div>
     </div>
-    <div class="kpi-card green">
+    <div class="kpi-card green retailer-kpi-card">
       <div class="kpi-label">Transactions</div>
       <div class="kpi-value-sm">{{ detail.metrics.transactions or 0 }}</div>
-      <div class="kpi-sub">{{ detail.metrics.active_days or 0 }} active sales days</div>
+      <div class="retailer-kpi-foot">{{ detail.metrics.active_days or 0 }} active sales days in {{ detail.period_label }}</div>
     </div>
-    <div class="kpi-card red">
+    <div class="kpi-card amber retailer-kpi-card">
       <div class="kpi-label">Repeat Depth</div>
       <div class="kpi-value-sm">{{ "{:,.1f}".format(detail.metrics.repeat_rate or 0) }}%</div>
-      <div class="kpi-sub">{{ detail.metrics.repeat_entities or 0 }} repeat brands in-store</div>
+      <div class="retailer-kpi-foot">{{ detail.metrics.repeat_entities or 0 }} repeat brands, {{ detail.metrics.single_entities or 0 }} one-time brands</div>
     </div>
-  </div>
+  </section>
 
-  <div class="retailer-grid">
-    <div class="card">
-      <h4 class="text-navy fw-bold mb-2">{{ coach.summary.headline }}</h4>
-      <p class="text-muted fs-sm">{{ coach.summary.summary }}</p>
-      <div class="coach-actions">
+  <section class="retailer-core-grid">
+    <div class="retailer-panel">
+      <div class="retailer-kicker">Coach Summary</div>
+      <h4>{{ coach.summary.headline }}</h4>
+      <p class="retailer-panel-copy">{{ coach.summary.summary }}</p>
+
+      <div class="coach-primary-actions">
         {% for item in coach.action_items %}
-          {% if item.url %}
-          <a class="btn btn-outline btn-sm" href="{{ item.url }}" {% if item.kind == 'report' %}target="_blank"{% endif %}>{{ item.label }}</a>
-          {% elif item.api_path %}
-          <button class="btn btn-outline btn-sm" type="button" onclick='runCoachAction({{ item|tojson }})'>{{ item.label }}</button>
+          {% if item.tone != 'utility' and item.recommendation_key != 'open_retailer_detail' %}
+            {% if item.url %}
+            <a class="btn {% if item.tone == 'primary' %}btn-navy{% else %}btn-outline{% endif %} btn-sm" href="{{ item.url }}" {% if item.kind == 'report' %}target="_blank"{% endif %}>{{ item.label }}</a>
+            {% elif item.api_path %}
+            <button class="btn {% if item.tone == 'primary' %}btn-navy{% else %}btn-outline{% endif %} btn-sm" type="button" onclick='runCoachAction({{ item|tojson }})'>{{ item.label }}</button>
+            {% endif %}
           {% endif %}
         {% endfor %}
       </div>
-      <div class="coach-evidence">
-        {% for signal in coach.signals[:4] %}
-        <span class="badge {% if signal.severity == 'critical' or signal.severity == 'high' %}badge-red{% elif signal.severity == 'medium' %}badge-amber{% else %}badge-muted{% endif %}">{{ signal.signal_type|replace('_', ' ')|title }}</span>
+
+      <div class="coach-utility-actions" style="margin-top:10px;">
+        {% for item in coach.action_items %}
+          {% if item.tone == 'utility' %}
+            {% if item.url %}
+            <a class="btn btn-outline btn-sm" href="{{ item.url }}">{{ item.label }}</a>
+            {% elif item.api_path %}
+            <button class="btn btn-outline btn-sm" type="button" onclick='runCoachAction({{ item|tojson }})'>{{ item.label }}</button>
+            {% endif %}
+          {% endif %}
         {% endfor %}
       </div>
-      <div style="margin-top:14px;">
-        <div class="kpi-label">Recommended next actions</div>
-        <div class="coach-reco-list">
-          {% for action in coach.recommendation_items[:4] %}
-          <div class="coach-reco-item">
-            <div class="fw-bold">{{ action.label }}</div>
-            <div class="coach-reco-meta">
-              <span class="fs-sm text-muted">Outcome score {{ "{:+.1f}".format(action.weighted_score or 0) }} · {{ action.total_events or 0 }} events</span>
-              <div class="coach-reco-actions">
-                <button class="btn btn-outline btn-sm" type="button" onclick='recordCoachOutcome({{ action|tojson }}, "positive", 1)'>Worked</button>
-                <button class="btn btn-outline btn-sm" type="button" onclick='recordCoachOutcome({{ action|tojson }}, "negative", -1)'>Didn’t Help</button>
-              </div>
+
+      <div class="coach-signal-row">
+        {% for signal in coach.signals[:5] %}
+        <span class="badge {% if signal.severity == 'critical' or signal.severity == 'high' %}badge-red{% elif signal.severity == 'medium' %}badge-amber{% else %}badge-blue{% endif %}">
+          {{ signal.evidence.title }}
+        </span>
+        {% else %}
+        <span class="badge badge-blue">No open coach signals</span>
+        {% endfor %}
+      </div>
+
+      <div class="kpi-label">Recommended next actions</div>
+      <div class="coach-reco-list">
+        {% for action in coach.recommendation_items[:4] %}
+        <div class="coach-reco-item">
+          <strong>{{ action.label }}</strong>
+          <div class="coach-reco-meta">
+            <span class="fs-sm text-muted">Outcome score {{ "{:+.1f}".format(action.weighted_score or 0) }} · {{ action.total_events or 0 }} recorded events</span>
+            <div class="coach-reco-actions">
+              <button class="btn btn-outline btn-sm" type="button" onclick='recordCoachOutcome({{ action|tojson }}, "positive", 1)'>Worked</button>
+              <button class="btn btn-outline btn-sm" type="button" onclick='recordCoachOutcome({{ action|tojson }}, "negative", -1)'>Didn’t Help</button>
             </div>
           </div>
-          {% else %}
-          <ul class="fs-sm text-muted" style="margin:8px 0 0 18px;">
-            {% for action in coach.summary.recommended_actions %}
-            <li>{{ action }}</li>
-            {% endfor %}
-          </ul>
-          {% endfor %}
         </div>
+        {% else %}
+        <div class="activity-empty">
+          No recommendation items have been scored yet. The coach will rank actions once outcomes are recorded for this retailer.
+        </div>
+        {% endfor %}
       </div>
+
+      <div id="coachStatus" class="coach-status"></div>
     </div>
 
-    <div class="card">
-      <h4 class="text-navy fw-bold mb-2">Retailer Revenue Trend</h4>
+    <div class="retailer-panel">
+      <div class="retailer-kicker">Performance Trend</div>
+      <h4>Retailer Revenue Trend</h4>
+      <p class="retailer-panel-copy">Historical movement across recent periods for this retailer.</p>
       {% if detail.historical %}
-      <canvas id="retailerHistoryChart" height="180"></canvas>
+      <canvas id="retailerHistoryChart" height="220"></canvas>
       {% else %}
-      <p class="text-muted fs-sm">Historical retailer trend will appear once more periods are available.</p>
+      <div class="activity-empty">Historical retailer trend will appear once more periods are available.</div>
       {% endif %}
-    </div>
-  </div>
 
-  <div class="retailer-grid">
-    <div class="card">
-      <h4 class="text-navy fw-bold mb-2">Open Signals</h4>
-      <div class="signal-list">
-        {% for signal in coach.signals %}
-        <div class="signal-item">
-          <h5>{{ signal.evidence.title }}</h5>
-          <p>{{ signal.evidence.message }}</p>
-        </div>
-        {% else %}
-        <p class="text-muted fs-sm">No open coach signals for this retailer.</p>
-        {% endfor %}
-      </div>
-    </div>
-
-    <div class="card">
-      <h4 class="text-navy fw-bold mb-2">Opportunity Brands</h4>
-      <div class="opportunity-list">
-        {% for item in detail.opportunity_brands %}
-        <div class="opportunity-item">
+      <div class="retailer-insight-list">
+        <div class="retailer-insight-item">
+          <span class="retailer-insight-icon">1</span>
           <div>
-            <div class="fw-bold">{{ item.brand_name }}</div>
-            <div class="meta">Portfolio rank {{ item.portfolio_rank or 'N/A' }} · {{ item.transactions }} transactions in peer demand</div>
+            <div class="fw-bold">Top brand in-store</div>
+            <div class="activity-meta">{{ detail.metrics.top_brand_name or 'Not available yet' }} · ₦{{ "{:,.2f}".format(detail.metrics.top_brand_revenue or 0) }}</div>
           </div>
-          <div class="fw-bold">₦{{ "{:,.2f}".format(item.revenue or 0) }}</div>
         </div>
-        {% else %}
-        <p class="text-muted fs-sm">No assortment gaps are visible for this retailer right now.</p>
-        {% endfor %}
+        <div class="retailer-insight-item">
+          <span class="retailer-insight-icon">2</span>
+          <div>
+            <div class="fw-bold">Average revenue per active brand</div>
+            <div class="activity-meta">₦{{ "{:,.2f}".format(detail.metrics.avg_revenue_per_entity or 0) }}</div>
+          </div>
+        </div>
+        <div class="retailer-insight-item">
+          <span class="retailer-insight-icon">3</span>
+          <div>
+            <div class="fw-bold">Tracking window</div>
+            <div class="activity-meta">First seen {{ detail.profile.first_seen or 'N/A' }} · Latest update {{ detail.profile.last_seen or 'N/A' }}</div>
+          </div>
+        </div>
       </div>
     </div>
-  </div>
+  </section>
 
-  <div class="retailer-grid">
-    <div class="card">
-      <h4 class="text-navy fw-bold mb-2">Brands in Store</h4>
-      <table class="mini-table">
+  <section class="retailer-section-grid">
+    <div class="retailer-panel" id="brand-mix">
+      <div class="retailer-kicker">Brand Mix</div>
+      <h4>Brands in Store</h4>
+      <p class="retailer-panel-copy">Current active brands ranked by retailer revenue contribution.</p>
+      <table class="retailer-table">
         <thead>
-          <tr><th>Brand</th><th>Revenue</th><th>MoM</th></tr>
+          <tr>
+            <th>Brand</th>
+            <th>Revenue</th>
+            <th>MoM</th>
+          </tr>
         </thead>
         <tbody>
           {% for row in detail.brand_rows %}
           <tr>
             <td>
-              <div class="fw-bold">{{ row.brand_name }}</div>
-              <div class="meta">{{ row.transactions }} transactions · {{ row.unique_skus }} SKUs</div>
+              <div class="value">{{ row.brand_name }}</div>
+              <div class="sub">{{ row.transactions }} transactions · {{ row.unique_skus }} SKUs · {{ "{:,.1f}".format(row.share_pct or 0) }}% of retailer revenue</div>
             </td>
-            <td>₦{{ "{:,.2f}".format(row.revenue or 0) }}</td>
+            <td class="value">₦{{ "{:,.2f}".format(row.revenue or 0) }}</td>
             <td>
               {% if row.revenue_mom is not none %}
               <span class="{% if row.revenue_mom >= 0 %}text-green{% else %}text-red{% endif %}">{{ "%+.1f"|format(row.revenue_mom) }}%</span>
@@ -189,123 +528,165 @@
       </table>
     </div>
 
-    <div class="card">
-      <h4 class="text-navy fw-bold mb-2">Top SKUs</h4>
-      <table class="mini-table">
+    <div class="retailer-panel" id="opportunity-brands">
+      <div class="retailer-kicker">Assortment Opportunity</div>
+      <h4>Opportunity Brands</h4>
+      <p class="retailer-panel-copy">Portfolio brands with current peer demand that are not active in this retailer.</p>
+      <table class="retailer-table">
         <thead>
-          <tr><th>SKU</th><th>Revenue</th><th>Qty</th></tr>
+          <tr>
+            <th>Brand</th>
+            <th>Peer Demand</th>
+          </tr>
         </thead>
         <tbody>
-          {% for row in detail.top_products %}
+          {% for item in detail.opportunity_brands %}
           <tr>
-            <td>{{ row.sku }}</td>
-            <td>₦{{ "{:,.2f}".format(row.revenue or 0) }}</td>
-            <td>{{ "{:,.1f}".format(row.quantity or 0) }}</td>
+            <td>
+              <div class="value">{{ item.brand_name }}</div>
+              <div class="sub">Portfolio rank {{ item.portfolio_rank or 'N/A' }} · {{ item.transactions }} peer transactions</div>
+            </td>
+            <td class="value">₦{{ "{:,.2f}".format(item.revenue or 0) }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="3" class="text-muted">No SKU data for this retailer.</td></tr>
+          <tr><td colspan="2" class="text-muted">No assortment gaps are visible for this retailer right now.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
-  </div>
+  </section>
 
-  <div class="retailer-grid">
-    <div class="card">
-      <h4 class="text-navy fw-bold mb-2">Recent Visits</h4>
-      {% for visit in detail.activity.visits %}
-      <div style="padding:10px 0;border-bottom:1px solid var(--gray);">
-        <div class="fw-bold">{{ visit.activity_date }}</div>
-        <div class="meta">{{ visit.salesman_name or 'Unknown SE' }} · {{ visit.event_count }} responses · {{ visit.issue_count }} issues</div>
+  <section class="retailer-activity-grid" id="activity-history">
+    <div class="retailer-panel">
+      <div class="retailer-kicker">Field Activity</div>
+      <h4>Recent Visits</h4>
+      <p class="retailer-panel-copy">Recent activity records linked to this retailer in the selected report context.</p>
+      {% if detail.activity.visits %}
+      <div class="activity-stream">
+        {% for visit in detail.activity.visits[:10] %}
+        <div class="activity-item">
+          <strong>{{ visit.activity_date }}</strong>
+          <div class="activity-meta">{{ visit.salesman_name or 'Unknown SE' }} · {{ visit.event_count }} responses · {{ visit.issue_count }} issues · {{ visit.opportunity_count or 0 }} opportunities</div>
+        </div>
+        {% endfor %}
       </div>
       {% else %}
-      <p class="text-muted fs-sm">No activity visits are linked to this retailer yet.</p>
-      {% endfor %}
+      <div class="activity-empty">
+        No linked field activity has been imported for this retailer in the selected report.
+        <div class="activity-empty-actions" style="margin-top:14px;">
+          <a class="btn btn-outline btn-sm" href="{{ clean_url_for('activity_intelligence', store=retailer_code, report_id=report.id if report else None) }}">Open Activity Hub</a>
+          <a class="btn btn-primary btn-sm" href="{{ clean_url_for('activity_intelligence', report_id=report.id if report else None) }}">Import Activity</a>
+        </div>
+      </div>
+      {% endif %}
     </div>
 
-    <div class="card">
-      <h4 class="text-navy fw-bold mb-2">Issue Log</h4>
-      {% for issue in detail.activity.issues[:12] %}
-      <div style="padding:10px 0;border-bottom:1px solid var(--gray);">
-        <div class="fw-bold">{{ issue.issue_type|replace('_', ' ')|title }}</div>
-        <div class="meta">{{ issue.activity_date }} · {{ issue.brand_name or 'Unmatched' }}</div>
-        <div class="fs-sm text-muted">{{ issue.answer or issue.label or issue.question }}</div>
+    <div class="retailer-panel">
+      <div class="retailer-kicker">Issue Log</div>
+      <h4>Open Issues</h4>
+      <p class="retailer-panel-copy">Latest recorded issues tied to this retailer and its brand activity.</p>
+      {% if detail.activity.issues %}
+      <div class="activity-stream">
+        {% for issue in detail.activity.issues[:12] %}
+        <div class="activity-item">
+          <strong>{{ issue.issue_type|replace('_', ' ')|title }}</strong>
+          <div class="activity-meta">{{ issue.activity_date }} · {{ issue.brand_name or 'Unmatched brand' }}</div>
+          <div class="activity-meta">{{ issue.answer or issue.label or issue.question }}</div>
+        </div>
+        {% endfor %}
       </div>
       {% else %}
-      <p class="text-muted fs-sm">No issues have been recorded for this retailer.</p>
-      {% endfor %}
+      <div class="activity-empty">
+        No issue has been recorded for this retailer in the linked activity log yet.
+      </div>
+      {% endif %}
     </div>
-  </div>
+  </section>
 </div>
 {% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script>
-  async function runCoachAction(item) {
-    if (!item || !item.api_path) return;
-    const payload = Object.assign({}, item.payload || {});
-    if (item.kind === 'schedule') {
-      payload.status = 'active';
-      payload.next_run = payload.next_run || new Date(Date.now() + 86400000).toISOString().slice(0, 19);
-    }
-    const res = await fetch(item.api_path, {
-      method: item.method || 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    alert(data.message || data.error || (data.success ? 'Action completed.' : 'Action failed.'));
-  }
+function setCoachStatus(message, isError = false) {
+  const el = document.getElementById('coachStatus');
+  if (!el) return;
+  el.textContent = message || '';
+  el.className = 'coach-status' + (isError ? ' text-red' : '');
+}
 
-  async function recordCoachOutcome(item, outcomeType, outcomeValue) {
-    const payload = {
-      scope_type: 'retailer',
-      scope_key: {{ retailer_code|tojson }},
-      report_id: {{ (report.id if report else none)|tojson }},
-      recommendation_key: item.recommendation_key,
-      recommendation_label: item.label,
-      outcome_type: outcomeType,
-      outcome_value: outcomeValue
-    };
-    const res = await fetch('/api/coach/recommendations/outcome', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    alert(data.success ? 'Outcome recorded.' : (data.error || 'Failed to record outcome.'));
+async function runCoachAction(item) {
+  if (!item || !item.api_path) return;
+  const payload = Object.assign({}, item.payload || {});
+  if (item.kind === 'schedule') {
+    payload.status = 'active';
+    payload.next_run = payload.next_run || new Date(Date.now() + 86400000).toISOString().slice(0, 19);
   }
+  const res = await fetch(item.api_path, {
+    method: item.method || 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  setCoachStatus(data.message || data.error || (data.success ? 'Action completed.' : 'Action failed.'), !data.success);
+}
 
-  const retailerHistory = {{ detail.historical|tojson if detail else '[]' }};
-  const retailerCtx = document.getElementById('retailerHistoryChart');
-  if (retailerCtx && window.Chart && retailerHistory.length) {
-    new Chart(retailerCtx, {
-      type: 'line',
-      data: {
-        labels: retailerHistory.map((row) => row.month_label),
-        datasets: [{
-          label: 'Revenue',
-          data: retailerHistory.map((row) => row.revenue || 0),
-          borderColor: '#1B2B5E',
-          backgroundColor: 'rgba(27,43,94,0.08)',
-          fill: true,
-          tension: 0.32,
-          borderWidth: 2
-        }]
-      },
-      options: {
-        responsive: true,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: {
-            ticks: {
-              callback: (value) => '₦' + Number(value || 0).toLocaleString()
-            }
-          }
+async function recordCoachOutcome(item, outcomeType, outcomeValue) {
+  const payload = {
+    scope_type: 'retailer',
+    scope_key: {{ retailer_code|tojson }},
+    report_id: {{ (report.id if report else none)|tojson }},
+    recommendation_key: item.recommendation_key,
+    recommendation_label: item.label,
+    outcome_type: outcomeType,
+    outcome_value: outcomeValue
+  };
+  const res = await fetch('/api/coach/recommendations/outcome', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  setCoachStatus(data.success ? 'Outcome recorded.' : (data.error || 'Failed to record outcome.'), !data.success);
+}
+
+const retailerHistory = {{ detail.historical|tojson if detail else '[]' }};
+const retailerCtx = document.getElementById('retailerHistoryChart');
+if (retailerCtx && window.Chart && retailerHistory.length) {
+  new Chart(retailerCtx, {
+    type: 'line',
+    data: {
+      labels: retailerHistory.map((row) => row.month_label),
+      datasets: [{
+        label: 'Revenue',
+        data: retailerHistory.map((row) => row.revenue || 0),
+        borderColor: '#1B2B5E',
+        backgroundColor: 'rgba(27,43,94,0.08)',
+        fill: true,
+        tension: 0.32,
+        borderWidth: 2.5,
+        pointRadius: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          ticks: { color: '#7280A0' },
+          grid: { display: false }
+        },
+        y: {
+          ticks: {
+            color: '#7280A0',
+            callback: (value) => '₦' + Number(value || 0).toLocaleString()
+          },
+          grid: { color: 'rgba(27,43,94,.08)' }
         }
       }
-    });
-  }
+    }
+  });
+}
 </script>
 {% endblock %}

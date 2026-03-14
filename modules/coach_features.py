@@ -10,6 +10,7 @@ raw rows.
 from __future__ import annotations
 
 import os
+import re
 from calendar import monthrange
 from functools import lru_cache
 from pathlib import Path
@@ -52,6 +53,53 @@ def _native(value: Any):
     if hasattr(value, "item"):
         return value.item()
     return value
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+
+def _retailer_identity(retailer_name: str, city: str | None = None, state: str | None = None) -> dict[str, str]:
+    retailer_name = str(retailer_name or "").strip()
+    parts = [part.strip() for part in retailer_name.split(",") if part.strip()]
+    chain_name = parts[0] if parts else retailer_name or "Unknown retailer"
+    branch_hint = ", ".join(parts[1:]) if len(parts) > 1 else ""
+    if branch_hint and branch_hint.upper() == branch_hint:
+        branch_hint = branch_hint.title()
+    location_bits = [str(city or "").strip(), str(state or "").strip()]
+    location_label = ", ".join(bit for bit in location_bits if bit)
+    if not location_label:
+        location_label = branch_hint or "Location detail pending"
+    return {
+        "chain_name": chain_name,
+        "branch_label": branch_hint or chain_name,
+        "location_label": location_label,
+        "retailer_name": retailer_name or chain_name,
+    }
+
+
+def _retailer_health_snapshot(revenue_mom: float | None, repeat_rate: float | None,
+                              active_brands: int | None, transactions: int | None) -> dict[str, Any]:
+    score = 48.0
+    if revenue_mom is not None:
+        score += _clamp(float(revenue_mom), -30.0, 30.0) * 0.9
+    score += min(float(repeat_rate or 0) * 0.28, 24.0)
+    score += min(int(active_brands or 0) * 1.35, 18.0)
+    score += min(int(transactions or 0) * 0.25, 10.0)
+    score = round(_clamp(score, 5.0, 98.0), 1)
+    if score >= 72:
+        band = "Strong"
+        tone = "green"
+    elif score >= 56:
+        band = "Steady"
+        tone = "blue"
+    elif score >= 42:
+        band = "Watch"
+        tone = "amber"
+    else:
+        band = "Pressure"
+        tone = "red"
+    return {"health_score": score, "health_band": band, "health_tone": tone}
 
 
 def _to_period(month_value: str | None):
@@ -555,9 +603,23 @@ def build_retailer_index(ds, report_id: int | None = None, month_value: str | No
         repeat_brands = int((brand_orders > 1).sum()) if len(brand_orders) else 0
         repeat_rate = round((repeat_brands / max(int(row["active_brands"]), 1)) * 100, 2)
         profile = profile_map.get(str(retailer_code), {})
+        identity = _retailer_identity(
+            profile.get("retailer_name") or str(retailer_code),
+            city=profile.get("city"),
+            state=profile.get("state"),
+        )
+        health = _retailer_health_snapshot(
+            _pct_delta(float(row["total_revenue"]), previous_revenue),
+            repeat_rate,
+            int(row["active_brands"]),
+            int(row["transactions"]),
+        )
         rows.append({
             "retailer_code": str(retailer_code),
-            "retailer_name": profile.get("retailer_name") or str(retailer_code),
+            "retailer_name": identity["retailer_name"],
+            "chain_name": identity["chain_name"],
+            "branch_label": identity["branch_label"],
+            "location_label": identity["location_label"],
             "state": profile.get("state"),
             "city": profile.get("city"),
             "total_revenue": _money(row["total_revenue"]),
@@ -570,6 +632,7 @@ def build_retailer_index(ds, report_id: int | None = None, month_value: str | No
             "portfolio_share_pct": round((float(row["total_revenue"]) / total_portfolio) * 100, 2) if total_portfolio else 0.0,
             "revenue_mom": _pct_delta(float(row["total_revenue"]), previous_revenue),
             "previous_revenue": _money(previous_revenue),
+            **health,
         })
     if limit:
         rows = rows[:limit]
@@ -591,10 +654,28 @@ def build_retailer_detail(ds, retailer_code: str, report_id: int | None = None,
                           month_value: str | None = None) -> dict[str, Any]:
     snapshot = build_scope_snapshot(ds, "retailer", scope_key=retailer_code, report_id=report_id, month_value=month_value, persist=True)
     profile = ds.get_retailer_profile(retailer_code) or {}
+    activity_store = (snapshot.get("activity") or {}).get("store") or {}
+    identity = _retailer_identity(
+        profile.get("retailer_name") or activity_store.get("retailer_name") or retailer_code,
+        city=profile.get("city") or activity_store.get("retailer_city"),
+        state=profile.get("state") or activity_store.get("retailer_state"),
+    )
+    health = _retailer_health_snapshot(
+        (snapshot.get("comparisons") or {}).get("revenue_mom"),
+        (snapshot.get("metrics") or {}).get("repeat_rate"),
+        (snapshot.get("metrics") or {}).get("active_brands"),
+        (snapshot.get("metrics") or {}).get("transactions"),
+    )
+    activity = snapshot.get("activity") or {}
     return {
         "retailer_code": retailer_code,
-        "retailer_name": profile.get("retailer_name") or retailer_code,
+        "retailer_name": identity["retailer_name"],
+        "chain_name": identity["chain_name"],
+        "branch_label": identity["branch_label"],
+        "location_label": identity["location_label"],
+        "activity_available": bool((activity.get("visits") or []) or (activity.get("issues") or [])),
         "profile": profile,
+        **health,
         **snapshot,
     }
 

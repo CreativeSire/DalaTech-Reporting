@@ -304,8 +304,8 @@ def build_action_items(ds, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     scores = _score_lookup(ds, snapshot)
 
     def _action(kind: str, label: str, recommendation_key: str, url: str | None = None,
-                api_path: str | None = None, method: str = "GET",
-                payload: dict[str, Any] | None = None) -> dict[str, Any]:
+                 api_path: str | None = None, method: str = "GET",
+                 payload: dict[str, Any] | None = None, tone: str = "secondary") -> dict[str, Any]:
         score = scores.get(recommendation_key, {})
         return {
             "kind": kind,
@@ -317,35 +317,37 @@ def build_action_items(ds, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             "payload": payload or {},
             "weighted_score": float(score.get("weighted_score") or 0),
             "total_events": int(score.get("total_events") or 0),
+            "tone": tone,
         }
 
     items: list[dict[str, Any]] = []
     if scope_type == "brand":
         encoded_scope = quote(str(scope_key), safe="")
         items.extend([
-            _action("open", "Open Brand", "open_brand_overview", url=f"/brand/{encoded_scope}"),
-            _action("open", "Open Trends", "open_brand_trends", url=f"/trends?scope=brand&brand={encoded_scope}"),
-            _action("open", "Open Forecast", "open_brand_forecast", url=f"/brand/{encoded_scope}?focus=forecast"),
-            _action("report", "Generate Report", "generate_brand_report", url=f"/api/report_html/{report_id}/{encoded_scope}" if report_id else None),
+            _action("open", "Open Brand", "open_brand_overview", url=f"/brand/{encoded_scope}", tone="primary"),
+            _action("open", "Open Trends", "open_brand_trends", url=f"/trends?scope=brand&brand={encoded_scope}", tone="primary"),
+            _action("open", "Open Forecast", "open_brand_forecast", url=f"/brand/{encoded_scope}?focus=forecast", tone="secondary"),
+            _action("report", "Open Report", "generate_brand_report", url=f"/api/report_html/{report_id}/{encoded_scope}" if report_id else None, tone="secondary"),
         ])
     elif scope_type == "retailer":
         encoded_scope = quote(str(scope_key), safe="")
+        query_string = f"?report_id={report_id}" if report_id else ""
         items.extend([
-            _action("open", "Open Retailer", "open_retailer_detail", url=f"/retailer/{encoded_scope}" + (f"?report_id={report_id}" if report_id else "")),
-            _action("report", "Generate Report", "generate_retailer_report", url=f"/api/retailers/{encoded_scope}/report_html" + (f"?report_id={report_id}" if report_id else "")),
-            _action("open", "Open Activity", "open_retailer_activity", url=f"/api/activity/store/{encoded_scope}"),
+            _action("open", "Open Retailer", "open_retailer_detail", url=f"/retailer/{encoded_scope}{query_string}", tone="primary"),
+            _action("report", "Open Report", "generate_retailer_report", url=f"/retailer/{encoded_scope}/report{query_string}", tone="secondary"),
+            _action("open", "View Activity", "open_retailer_activity", url=f"/activity-intelligence?store={encoded_scope}" + (f"&report_id={report_id}" if report_id else ""), tone="secondary"),
         ])
     else:
         items.extend([
-            _action("open", "Open Forecasting", "open_portfolio_forecasting", url="/forecasting"),
-            _action("open", "Open Trends", "open_portfolio_trends", url="/trends"),
-            _action("open", "Open Copilot", "open_copilot", url="/copilot"),
+            _action("open", "Open Forecasting", "open_portfolio_forecasting", url="/forecasting", tone="primary"),
+            _action("open", "Open Trends", "open_portfolio_trends", url="/trends", tone="primary"),
+            _action("open", "Open Copilot", "open_copilot", url="/copilot", tone="secondary"),
         ])
 
     items.extend([
         _action(
             "schedule",
-            "Schedule Nightly Refresh",
+            "Auto-refresh Coach",
             "schedule_coach_refresh",
             api_path="/api/copilot/schedules",
             method="POST",
@@ -361,10 +363,11 @@ def build_action_items(ds, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                     "period_label": period_label,
                 },
             },
+            tone="utility",
         ),
         _action(
             "pin",
-            "Pin Summary",
+            "Pin Insight",
             "pin_coach_summary",
             api_path="/api/coach/pin",
             method="POST",
@@ -373,10 +376,12 @@ def build_action_items(ds, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                 "scope_key": scope_key,
                 "report_id": report_id,
             },
+            tone="utility",
         ),
     ])
     items = _dedupe_action_items(items)
-    items.sort(key=lambda item: (-float(item.get("weighted_score") or 0), item.get("label") or ""))
+    kind_priority = {"open": 0, "report": 1, "schedule": 2, "pin": 3}
+    items.sort(key=lambda item: (kind_priority.get(item.get("kind"), 9), item.get("label") or ""))
     return items
 
 

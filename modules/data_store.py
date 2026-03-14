@@ -2624,30 +2624,30 @@ class DataStore:
             report_filter = ' AND report_id=?'
             report_params.append(report_id)
 
-        match_params = (retailer_code, retailer_code, *report_params)
+        match_params = (retailer_code.lower(), retailer_code.lower(), *report_params)
         with self._connect() as conn:
             totals = conn.execute(
                 f"""SELECT retailer_name, retailer_state, retailer_city,
                            COUNT(*) AS events,
                            COUNT(DISTINCT activity_date) AS active_days,
                            COUNT(DISTINCT salesman_name) AS salespeople
-                    FROM activity_events
-                    WHERE (retailer_code=? OR retailer_name=?){report_filter}
-                    GROUP BY retailer_name, retailer_state, retailer_city
-                    ORDER BY activity_date DESC
-                    LIMIT 1""",
+                     FROM activity_events
+                     WHERE (LOWER(COALESCE(retailer_code, ''))=? OR LOWER(COALESCE(retailer_name, ''))=?){report_filter}
+                     GROUP BY retailer_name, retailer_state, retailer_city
+                     ORDER BY activity_date DESC
+                     LIMIT 1""",
                 match_params
             ).fetchone()
             visits = conn.execute(
                 f"""SELECT * FROM activity_visits
-                    WHERE (retailer_code=? OR retailer_name=?){report_filter}
+                    WHERE (LOWER(COALESCE(retailer_code, ''))=? OR LOWER(COALESCE(retailer_name, ''))=?){report_filter}
                     ORDER BY activity_date DESC, id DESC
                     LIMIT ?""",
                 (*match_params, limit)
             ).fetchall()
             issues = conn.execute(
                 f"""SELECT * FROM activity_issues
-                    WHERE (retailer_code=? OR retailer_name=?){report_filter}
+                    WHERE (LOWER(COALESCE(retailer_code, ''))=? OR LOWER(COALESCE(retailer_name, ''))=?){report_filter}
                     ORDER BY activity_date DESC, id DESC
                     LIMIT ?""",
                 (*match_params, limit)
@@ -2655,7 +2655,7 @@ class DataStore:
             brands = conn.execute(
                 f"""SELECT COALESCE(brand_name, 'Unmatched') AS brand_name, COUNT(*) AS mentions
                     FROM activity_brand_mentions
-                    WHERE (retailer_code=? OR retailer_name=?){report_filter}
+                    WHERE (LOWER(COALESCE(retailer_code, ''))=? OR LOWER(COALESCE(retailer_name, ''))=?){report_filter}
                     GROUP BY COALESCE(brand_name, 'Unmatched')
                     ORDER BY mentions DESC, brand_name
                     LIMIT ?""",
@@ -2685,6 +2685,30 @@ class DataStore:
 
     def get_store_activity_summary(self, retailer_code):
         return self.get_retailer_activity_summary(retailer_code)
+
+    def list_activity_retailers(self, report_id=None, limit=500):
+        clauses = []
+        params = []
+        if report_id:
+            clauses.append("report_id=?")
+            params.append(report_id)
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ''
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT
+                        COALESCE(NULLIF(retailer_name, ''), retailer_code) AS retailer_name,
+                        retailer_code,
+                        COUNT(*) AS visit_count,
+                        MAX(activity_date) AS last_activity,
+                        COUNT(DISTINCT salesman_name) AS salespeople
+                    FROM activity_visits
+                    {where_clause}
+                    GROUP BY retailer_code, COALESCE(NULLIF(retailer_name, ''), retailer_code)
+                    ORDER BY visit_count DESC, retailer_name ASC
+                    LIMIT ?""",
+                (*params, limit)
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def _hydrate_coach_feature_snapshot(self, row):
         item = dict(row)

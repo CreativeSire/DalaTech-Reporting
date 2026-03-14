@@ -31,7 +31,7 @@
     <div class="eyebrow">Retailer Intelligence Report</div>
     <h1>{{ detail.retailer_name }}</h1>
     <div class="muted">{{ detail.period_label }} · Generated {{ generated_at }}</div>
-    <div class="muted">{{ detail.profile.city or detail.activity.store.retailer_city or 'Unknown city' }}{% if detail.profile.state or detail.activity.store.retailer_state %}, {{ detail.profile.state or detail.activity.store.retailer_state }}{% endif %}</div>
+    <div class="muted">{{ detail.location_label }}</div>
     <div style="margin-top:12px;font-size:14px;font-weight:700;color:#1B2B5E;">{{ detail.coach.summary.headline }}</div>
     <div class="muted" style="margin-top:6px;">{{ detail.coach.summary.summary }}</div>
   </section>

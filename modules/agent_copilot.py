@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 from datetime import datetime
+from urllib.parse import quote
 
 from .narrative_ai import gemini_available, _get_client  # type: ignore
 
@@ -1236,8 +1237,9 @@ def execute_admin_tool(ds, tool_name: str, arguments=None, context=None,
             result = _tool_response(status='error', message='retailer_code is required.')
         else:
             report_id = (report or {}).get('id')
-            html_url = f"/api/retailers/{retailer_code}/report_html"
-            pdf_url = f"/api/retailers/{retailer_code}/report_pdf"
+            encoded_retailer = quote(str(retailer_code), safe="")
+            html_url = f"/retailer/{encoded_retailer}/report"
+            pdf_url = f"/api/retailers/{encoded_retailer}/report_pdf"
             if report_id:
                 html_url += f"?report_id={report_id}"
                 pdf_url += f"?report_id={report_id}"

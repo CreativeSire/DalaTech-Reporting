@@ -23,6 +23,7 @@ Routes:
 """
 
 import os, io, json, traceback, shutil, uuid, threading, tempfile, zipfile
+from collections import Counter
 from datetime import datetime
 from functools import wraps
 import numpy as np
@@ -628,6 +629,15 @@ def _refresh_copilot_state(report_id=None, reason='system_update', brand_name=No
 @app.context_processor
 def inject_copilot_context():
     return {'copilot_context': _current_copilot_context()}
+
+
+@app.template_global()
+def clean_url_for(endpoint, **values):
+    clean_values = {
+        key: value for key, value in values.items()
+        if value not in (None, "", [], {}, ())
+    }
+    return url_for(endpoint, **clean_values)
 
 
 def _review_catalog_item(item_id, action, note=None, target_brand_id=None, target_sku_id=None):
@@ -3395,8 +3405,44 @@ def activity_intelligence():
     report_id = request.args.get('report_id', latest_report['id'] if latest_report else None, type=int)
     batch_id = request.args.get('batch_id', type=int)
     brand_name = (request.args.get('brand') or '').strip() or None
-    summary = ds.get_activity_summary(batch_id=batch_id, report_id=report_id, brand_name=brand_name)
+    store_code = (request.args.get('store') or '').strip() or None
+
+    if store_code:
+        store_summary = ds.get_retailer_activity_summary(store_code, report_id=report_id)
+        issue_counts = Counter((item.get('issue_type') or 'unspecified') for item in (store_summary.get('issues') or []))
+        salesperson_counts = Counter((item.get('salesman_name') or 'Unknown') for item in (store_summary.get('visits') or []))
+        top_issues = [
+            {'issue_type': issue_type, 'count': count}
+            for issue_type, count in issue_counts.most_common(8)
+        ]
+        top_salespeople = [
+            {'salesman_name': name, 'visits': count}
+            for name, count in salesperson_counts.most_common(8)
+        ]
+        summary = {
+            'totals': {
+                'events': int((store_summary.get('totals') or {}).get('events') or 0),
+                'visits': int(store_summary.get('visit_count') or 0),
+                'issues': int(store_summary.get('issue_count') or 0),
+                'stores': 1 if store_summary.get('store') or store_code else 0,
+                'salespeople': int((store_summary.get('totals') or {}).get('salespeople') or 0),
+                'active_days': int((store_summary.get('totals') or {}).get('active_days') or 0),
+                'opportunities': 0,
+            },
+            'recent_issues': store_summary.get('issues') or [],
+            'recent_visits': store_summary.get('visits') or [],
+            'top_issues': top_issues,
+            'top_brands': store_summary.get('brands') or [],
+            'top_salespeople': top_salespeople,
+            'store': store_summary.get('store'),
+            'store_name': (store_summary.get('store') or {}).get('retailer_name') or store_code,
+            'store_view': True,
+        }
+    else:
+        summary = ds.get_activity_summary(batch_id=batch_id, report_id=report_id, brand_name=brand_name)
+
     batches = ds.get_activity_batches(limit=30)
+    available_stores = ds.list_activity_retailers(report_id=report_id, limit=500)
     return render_template(
         'portal/activity_intelligence.html',
         alert_count=alert_count,
@@ -3405,6 +3451,8 @@ def activity_intelligence():
         batches=batches,
         selected_batch_id=batch_id,
         selected_brand=brand_name,
+        selected_store=store_code,
+        available_stores=available_stores,
         summary=summary,
     )
 

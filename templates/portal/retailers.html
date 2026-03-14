@@ -2,26 +2,292 @@
 {% block title %}Retailers - DALA Analytics{% endblock %}
 {% block page_title %}Retailer Intelligence{% endblock %}
 
-{% block head_extra %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
-  .retailer-toolbar { display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:18px; }
-  .retailer-toolbar form { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
-  .retailer-kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:18px; margin-bottom:20px; }
-  .retailer-feature-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px; margin-bottom:20px; }
-  .retailer-feature-list { display:flex; flex-direction:column; gap:10px; }
-  .retailer-feature-item { display:flex; justify-content:space-between; gap:10px; padding:12px 0; border-bottom:1px solid var(--gray); }
-  .retailer-meta { font-size:12px; color:var(--muted); }
-  .retailer-table-actions { display:flex; gap:8px; flex-wrap:wrap; }
-  .retailer-tag-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
-  .retailer-search { min-width:240px; }
-  .coach-ops { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  .coach-ops-status { font-size:12px; color:var(--muted); }
+  .retailer-page {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  .retailer-hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.45fr) minmax(320px, .9fr);
+    gap: 20px;
+  }
+  .retailer-hero-panel {
+    position: relative;
+    overflow: hidden;
+    padding: 28px;
+    border-radius: 22px;
+    background:
+      radial-gradient(circle at top right, rgba(46, 134, 193, .16), transparent 34%),
+      radial-gradient(circle at bottom left, rgba(232, 25, 44, .10), transparent 28%),
+      linear-gradient(135deg, #182657 0%, #24397E 62%, #1B2B5E 100%);
+    color: #fff;
+    box-shadow: 0 28px 60px rgba(15, 26, 61, .24);
+  }
+  .retailer-hero-panel::after {
+    content: "";
+    position: absolute;
+    inset: auto -60px -80px auto;
+    width: 240px;
+    height: 240px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .08);
+    filter: blur(8px);
+  }
+  .retailer-kicker {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    opacity: .76;
+  }
+  .retailer-hero-panel h3 {
+    margin: 12px 0 10px;
+    font-size: 32px;
+    line-height: 1.1;
+    max-width: 680px;
+  }
+  .retailer-hero-panel p {
+    max-width: 660px;
+    color: rgba(255, 255, 255, .8);
+    line-height: 1.7;
+  }
+  .retailer-hero-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .retailer-hero-stat {
+    min-width: 144px;
+    padding: 14px 16px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, .08);
+    backdrop-filter: blur(12px);
+  }
+  .retailer-hero-stat strong {
+    display: block;
+    font-size: 24px;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+  .retailer-hero-stat span {
+    font-size: 12px;
+    color: rgba(255, 255, 255, .78);
+  }
+  .retailer-control-card {
+    padding: 24px;
+    border-radius: 22px;
+    background: #fff;
+    border: 1px solid rgba(27, 43, 94, .08);
+    box-shadow: 0 20px 48px rgba(18, 29, 68, .08);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .retailer-control-card h4 {
+    color: var(--navy);
+    font-size: 18px;
+    margin-bottom: 6px;
+  }
+  .retailer-control-card p {
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .retailer-controls-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 170px;
+    gap: 12px;
+  }
+  .retailer-coach-ops {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .retailer-coach-ops .btn {
+    flex: 1 1 150px;
+    justify-content: center;
+  }
+  .retailer-status {
+    min-height: 18px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .retailer-kpis {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .retailer-chart-grid,
+  .retailer-feature-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+  }
+  .retailer-feature-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .retailer-analytics-card {
+    padding: 22px;
+    border-radius: 18px;
+    background: #fff;
+    border: 1px solid rgba(27, 43, 94, .08);
+    box-shadow: 0 18px 40px rgba(18, 29, 68, .07);
+  }
+  .retailer-analytics-card h4 {
+    margin-bottom: 4px;
+    color: var(--navy);
+    font-size: 18px;
+  }
+  .retailer-analytics-card p {
+    margin-bottom: 16px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .retailer-feature-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .retailer-feature-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    padding: 14px 16px;
+    border-radius: 16px;
+    border: 1px solid rgba(27, 43, 94, .08);
+    background: linear-gradient(180deg, #ffffff 0%, #f8faff 100%);
+  }
+  .retailer-feature-item strong {
+    display: block;
+    color: var(--navy);
+    font-size: 16px;
+    margin-bottom: 4px;
+  }
+  .retailer-feature-meta {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.55;
+  }
+  .retailer-score {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .retailer-score-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .retailer-score-track {
+    width: 100%;
+    height: 8px;
+    border-radius: 999px;
+    background: #e9eef7;
+    overflow: hidden;
+  }
+  .retailer-score-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #1b2b5e 0%, #2e86c1 100%);
+  }
+  .retailer-score-fill.red {
+    background: linear-gradient(90deg, #f25f6c 0%, #e8192c 100%);
+  }
+  .retailer-score-fill.amber {
+    background: linear-gradient(90deg, #f4c56d 0%, #c0922a 100%);
+  }
+  .retailer-score-fill.green {
+    background: linear-gradient(90deg, #3ecf8e 0%, #1e8449 100%);
+  }
+  .retailer-ranking-card {
+    padding: 0;
+    overflow: hidden;
+  }
+  .retailer-ranking-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 24px 24px 0;
+  }
+  .retailer-ranking-note {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.65;
+  }
+  .retailer-table-wrap {
+    overflow-x: auto;
+    padding: 18px 24px 24px;
+  }
+  .retailer-location {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .retailer-tag-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .retailer-table-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .retailer-share {
+    min-width: 140px;
+  }
+  .retailer-share strong {
+    display: block;
+    color: var(--navy);
+    font-size: 13px;
+    margin-bottom: 6px;
+  }
+  .retailer-empty {
+    padding: 28px;
+    border-radius: 18px;
+    border: 1px dashed rgba(27, 43, 94, .14);
+    background: linear-gradient(180deg, #fff 0%, #f9fbff 100%);
+    text-align: center;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+  @media (max-width: 1200px) {
+    .retailer-hero,
+    .retailer-feature-grid,
+    .retailer-chart-grid {
+      grid-template-columns: 1fr;
+    }
+    .retailer-kpis {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 720px) {
+    .retailer-controls-form,
+    .retailer-kpis {
+      grid-template-columns: 1fr;
+    }
+    .retailer-feature-item {
+      grid-template-columns: 1fr;
+    }
+    .retailer-hero-panel h3 {
+      font-size: 26px;
+    }
+  }
 </style>
 {% endblock %}
 
 {% block topbar_actions %}
 {% if report %}
-<span class="text-muted fs-sm">{{ period_label or report.month_label }}</span>
+<span class="badge badge-blue">{{ period_label or report.month_label }}</span>
 {% endif %}
 {% endblock %}
 
@@ -35,171 +301,257 @@
 {% set total_revenue = retailer_rows|sum(attribute='total_revenue') %}
 {% set avg_repeat = (retailer_rows|sum(attribute='repeat_rate') / (retailer_rows|length or 1)) if retailer_rows else 0 %}
 {% set avg_brands = (retailer_rows|sum(attribute='active_brands') / (retailer_rows|length or 1)) if retailer_rows else 0 %}
+{% set avg_health = (retailer_rows|sum(attribute='health_score') / (retailer_rows|length or 1)) if retailer_rows else 0 %}
+{% set top_retailer = retailer_rows[0] if retailer_rows else none %}
 
-<div class="card" style="margin-bottom:20px;">
-  <div class="retailer-toolbar">
-    <div>
-      <h3 class="text-navy fw-bold mb-1">Retailer Command Surface</h3>
-      <p class="text-muted fs-sm mb-0">Use this page for supermarket-level intelligence: sales, coverage, reorder depth, and coach signals.</p>
-    </div>
-    <div class="coach-ops">
-      <button class="btn btn-outline btn-sm" type="button" onclick="runCoachJob('current')">Refresh Coach</button>
-      <button class="btn btn-outline btn-sm" type="button" onclick="runCoachJob('backfill_recent')">Backfill Recent</button>
-      <button class="btn btn-outline btn-sm" type="button" onclick="validateThresholds()">Validate Signals</button>
-      <span id="coachOpsStatus" class="coach-ops-status"></span>
-    </div>
-    <form method="get" action="{{ url_for('retailers') }}">
-      {% if report %}
-      <input type="hidden" name="report_id" value="{{ report.id }}">
-      {% endif %}
-      <input id="retailerSearch" class="form-control retailer-search" type="search" placeholder="Search retailer" autocomplete="off">
-      <select class="form-control" name="month" onchange="this.form.submit()">
-        <option value="">Latest period</option>
-        {% for item in available_months %}
-        <option value="{{ item.value }}" {% if selected_month == item.value %}selected{% endif %}>{{ item.label }}</option>
-        {% endfor %}
-      </select>
-    </form>
-  </div>
-</div>
-
-<div class="retailer-kpis">
-  <div class="kpi-card blue">
-    <div class="kpi-label">Retailers in View</div>
-    <div class="kpi-value-sm">{{ retailer_rows|length }}</div>
-    <div class="kpi-sub">{{ period_label }}</div>
-  </div>
-  <div class="kpi-card">
-    <div class="kpi-label">Total Retailer Revenue</div>
-    <div class="kpi-value-sm">₦{{ "{:,.2f}".format(total_revenue) }}</div>
-    <div class="kpi-sub">Sales value across the visible retailers</div>
-  </div>
-  <div class="kpi-card green">
-    <div class="kpi-label">Average Brand Mix</div>
-    <div class="kpi-value-sm">{{ "{:,.1f}".format(avg_brands) }}</div>
-    <div class="kpi-sub">Active brands per retailer</div>
-  </div>
-  <div class="kpi-card red">
-    <div class="kpi-label">Average Repeat Depth</div>
-    <div class="kpi-value-sm">{{ "{:,.1f}".format(avg_repeat) }}%</div>
-    <div class="kpi-sub">Brand-level repeat rate inside retailers</div>
-  </div>
-</div>
-
-<div class="retailer-feature-grid">
-  <div class="card">
-    <h4 class="text-navy fw-bold mb-2">Retailers Under Pressure</h4>
-    <div class="retailer-feature-list">
-      {% for item in featured.risk %}
-      <div class="retailer-feature-item">
-        <div>
-          <div class="fw-bold">{{ item.retailer_name }}</div>
-          <div class="retailer-meta">Revenue {{ "%+.1f"|format(item.revenue_mom or 0) }}% vs prior period</div>
+<div class="retailer-page">
+  <section class="retailer-hero">
+    <div class="retailer-hero-panel">
+      <div class="retailer-kicker">Retailer Command Center</div>
+      <h3>Portfolio-level supermarket intelligence with coach signals, retailer ranking, and fast drill-down.</h3>
+      <p>
+        Use this surface to see which supermarkets are strengthening, where repeat depth is slipping,
+        and where brand mix expansion is likely to pay off in the current period.
+      </p>
+      <div class="retailer-hero-stats">
+        <div class="retailer-hero-stat">
+          <strong>{{ retailer_rows|length }}</strong>
+          <span>Retailers tracked in {{ period_label }}</span>
         </div>
-        <a class="btn btn-outline btn-sm" href="{{ url_for('retailer_detail', retailer_code=item.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open</a>
-      </div>
-      {% else %}
-      <p class="text-muted fs-sm">No retailer is currently flagged as deteriorating.</p>
-      {% endfor %}
-    </div>
-  </div>
-  <div class="card">
-    <h4 class="text-navy fw-bold mb-2">Retailers Accelerating</h4>
-    <div class="retailer-feature-list">
-      {% for item in featured.growth %}
-      <div class="retailer-feature-item">
-        <div>
-          <div class="fw-bold">{{ item.retailer_name }}</div>
-          <div class="retailer-meta">Revenue {{ "%+.1f"|format(item.revenue_mom or 0) }}% with {{ item.active_brands }} brands active</div>
+        <div class="retailer-hero-stat">
+          <strong>{{ featured.risk|length }}</strong>
+          <span>Under pressure right now</span>
         </div>
-        <a class="btn btn-outline btn-sm" href="{{ url_for('retailer_detail', retailer_code=item.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open</a>
-      </div>
-      {% else %}
-      <p class="text-muted fs-sm">No retailer is currently flagged as accelerating.</p>
-      {% endfor %}
-    </div>
-  </div>
-  <div class="card">
-    <h4 class="text-navy fw-bold mb-2">Assortment Opportunity</h4>
-    <div class="retailer-feature-list">
-      {% for item in featured.opportunity %}
-      <div class="retailer-feature-item">
-        <div>
-          <div class="fw-bold">{{ item.retailer_name }}</div>
-          <div class="retailer-meta">{{ item.active_brands }} active brands · {{ "{:,.1f}".format(item.repeat_rate or 0) }}% repeat depth</div>
+        <div class="retailer-hero-stat">
+          <strong>{{ featured.growth|length }}</strong>
+          <span>Accelerating retailers</span>
         </div>
-        <a class="btn btn-outline btn-sm" href="{{ url_for('retailer_detail', retailer_code=item.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open</a>
+        <div class="retailer-hero-stat">
+          <strong>{{ "{:,.1f}".format(avg_health) }}</strong>
+          <span>Average operating score</span>
+        </div>
       </div>
-      {% else %}
-      <p class="text-muted fs-sm">Opportunity signals will appear once the sales workbook is available.</p>
-      {% endfor %}
     </div>
-  </div>
-</div>
 
-<div class="card">
-  <div style="display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-    <div>
-      <h4 class="text-navy fw-bold mb-1">Retailer Ranking</h4>
-      <p class="text-muted fs-sm mb-0">The list below is the retailer-level operating view for the selected period.</p>
+    <div class="retailer-control-card">
+      <div>
+        <h4>Current operating focus</h4>
+        <p>
+          {% if top_retailer %}
+          {{ top_retailer.retailer_name }} leads the visible portfolio at ₦{{ "{:,.2f}".format(top_retailer.total_revenue) }}
+          with {{ "{:,.1f}".format(top_retailer.repeat_rate) }}% repeat depth.
+          {% else %}
+          No retailer rows are available for this period yet.
+          {% endif %}
+        </p>
+      </div>
+      <form method="get" action="{{ url_for('retailers') }}" class="retailer-controls-form">
+        {% if report %}
+        <input type="hidden" name="report_id" value="{{ report.id }}">
+        {% endif %}
+        <input id="retailerSearch" class="form-control" type="search" placeholder="Search retailer or branch" autocomplete="off">
+        <select class="form-control" name="month" onchange="this.form.submit()">
+          <option value="">Latest period</option>
+          {% for item in available_months %}
+          <option value="{{ item.value }}" {% if selected_month == item.value %}selected{% endif %}>{{ item.label }}</option>
+          {% endfor %}
+        </select>
+      </form>
+      <div class="retailer-coach-ops">
+        <button class="btn btn-outline btn-sm" type="button" onclick="runCoachJob('current')">Refresh Coach</button>
+        <button class="btn btn-outline btn-sm" type="button" onclick="runCoachJob('backfill_recent')">Backfill Recent</button>
+        <button class="btn btn-outline btn-sm" type="button" onclick="validateThresholds()">Validate Signals</button>
+      </div>
+      <div id="coachOpsStatus" class="retailer-status"></div>
     </div>
-  </div>
-  <div class="table-wrap">
-    <table class="data-table" id="retailerTable">
-      <thead>
-        <tr>
-          <th>Retailer</th>
-          <th>Revenue</th>
-          <th>MoM</th>
-          <th>Brands</th>
-          <th>Transactions</th>
-          <th>Repeat</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in retailer_rows %}
-        <tr data-retailer="{{ row.retailer_name|lower }}">
-          <td>
-            <div class="fw-bold">{{ row.retailer_name }}</div>
-            <div class="retailer-meta">{{ row.city or 'Unknown city' }}{% if row.state %}, {{ row.state }}{% endif %}</div>
-            <div class="retailer-tag-row">
-              {% for tag in row.tags %}
-              <span class="badge {{ tag.class }}">{{ tag.label }}</span>
-              {% endfor %}
-            </div>
-          </td>
-          <td>₦{{ "{:,.2f}".format(row.total_revenue) }}</td>
-          <td>
-            {% if row.revenue_mom is not none %}
-            <span class="{% if row.revenue_mom >= 0 %}text-green{% else %}text-red{% endif %}">{{ "%+.1f"|format(row.revenue_mom) }}%</span>
-            {% else %}
-            <span class="text-muted">N/A</span>
-            {% endif %}
-          </td>
-          <td>{{ row.active_brands }}</td>
-          <td>{{ row.transactions }}</td>
-          <td>{{ "{:,.1f}".format(row.repeat_rate) }}%</td>
-          <td>
-            <div class="retailer-table-actions">
-              <a class="btn btn-outline btn-sm" href="{{ url_for('retailer_detail', retailer_code=row.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open</a>
-              <a class="btn btn-outline btn-sm" target="_blank" href="{{ url_for('api_retailer_report_html', retailer_code=row.retailer_code, month=selected_month, report_id=report.id if report else None) }}">HTML</a>
-              <a class="btn btn-primary btn-sm" href="{{ url_for('api_retailer_report_pdf', retailer_code=row.retailer_code, month=selected_month, report_id=report.id if report else None) }}">PDF</a>
-            </div>
-          </td>
-        </tr>
+  </section>
+
+  <section class="retailer-kpis">
+    <div class="kpi-card blue">
+      <div class="kpi-label">Retailer Revenue</div>
+      <div class="kpi-value-sm">₦{{ "{:,.2f}".format(total_revenue) }}</div>
+      <div class="kpi-sub">Combined sales value in the visible retailer set</div>
+    </div>
+    <div class="kpi-card green">
+      <div class="kpi-label">Average Brand Mix</div>
+      <div class="kpi-value-sm">{{ "{:,.1f}".format(avg_brands) }}</div>
+      <div class="kpi-sub">Active brands per retailer in the selected period</div>
+    </div>
+    <div class="kpi-card amber">
+      <div class="kpi-label">Average Repeat Depth</div>
+      <div class="kpi-value-sm">{{ "{:,.1f}".format(avg_repeat) }}%</div>
+      <div class="kpi-sub">Brand-level repeat rate inside each retailer</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Average Operating Score</div>
+      <div class="kpi-value-sm">{{ "{:,.1f}".format(avg_health) }}</div>
+      <div class="kpi-sub">Composite score from momentum, repeat depth, mix, and transactions</div>
+    </div>
+  </section>
+
+  <section class="retailer-chart-grid">
+    <div class="retailer-analytics-card">
+      <h4>Revenue Leaders</h4>
+      <p>The highest-value supermarkets in the current retailer view.</p>
+      <canvas id="retailerRevenueChart" height="220"></canvas>
+    </div>
+    <div class="retailer-analytics-card">
+      <h4>Repeat Depth vs Brand Mix</h4>
+      <p>Retailers with strong reorder behavior and broad assortment are the healthiest mix-expansion targets.</p>
+      <canvas id="retailerRepeatChart" height="220"></canvas>
+    </div>
+  </section>
+
+  <section class="retailer-feature-grid">
+    <div class="retailer-analytics-card">
+      <h4>Retailers Under Pressure</h4>
+      <p>Immediate watchlist for declining supermarket demand.</p>
+      <div class="retailer-feature-list">
+        {% for item in featured.risk %}
+        <div class="retailer-feature-item">
+          <div>
+            <strong>{{ item.retailer_name }}</strong>
+            <div class="retailer-feature-meta">{{ item.location_label }} · Revenue {{ "%+.1f"|format(item.revenue_mom or 0) }}% versus prior period</div>
+          </div>
+          <a class="btn btn-outline btn-sm" href="{{ clean_url_for('retailer_detail', retailer_code=item.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open</a>
+        </div>
         {% else %}
-        <tr><td colspan="7" class="text-muted">No retailer rows are available for this view.</td></tr>
+        <div class="retailer-empty">No retailer is currently flagged as deteriorating.</div>
         {% endfor %}
-      </tbody>
-    </table>
-  </div>
+      </div>
+    </div>
+
+    <div class="retailer-analytics-card">
+      <h4>Retailers Accelerating</h4>
+      <p>Where retailer momentum is rising fastest.</p>
+      <div class="retailer-feature-list">
+        {% for item in featured.growth %}
+        <div class="retailer-feature-item">
+          <div>
+            <strong>{{ item.retailer_name }}</strong>
+            <div class="retailer-feature-meta">{{ item.location_label }} · Revenue {{ "%+.1f"|format(item.revenue_mom or 0) }}% with {{ item.active_brands }} active brands</div>
+          </div>
+          <a class="btn btn-outline btn-sm" href="{{ clean_url_for('retailer_detail', retailer_code=item.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open</a>
+        </div>
+        {% else %}
+        <div class="retailer-empty">No retailer is currently flagged as accelerating.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="retailer-analytics-card">
+      <h4>Assortment Opportunity</h4>
+      <p>Retailers with room to widen brand presence and defend repeat depth.</p>
+      <div class="retailer-feature-list">
+        {% for item in featured.opportunity %}
+        <div class="retailer-feature-item">
+          <div>
+            <strong>{{ item.retailer_name }}</strong>
+            <div class="retailer-feature-meta">{{ item.location_label }} · {{ item.active_brands }} active brands · {{ "{:,.1f}".format(item.repeat_rate or 0) }}% repeat depth</div>
+          </div>
+          <a class="btn btn-outline btn-sm" href="{{ clean_url_for('retailer_detail', retailer_code=item.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open</a>
+        </div>
+        {% else %}
+        <div class="retailer-empty">Opportunity signals will appear once sales history is available for this period.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="card retailer-ranking-card">
+    <div class="retailer-ranking-header">
+      <div>
+        <h4 class="text-navy fw-bold mb-1">Retailer Ranking</h4>
+        <p class="retailer-ranking-note">The table below is the operator view for the selected period. It combines revenue movement, repeat depth, active mix, and retailer score so you can move from ranking to action quickly.</p>
+      </div>
+    </div>
+    <div class="retailer-table-wrap">
+      <table class="data-table" id="retailerTable">
+        <thead>
+          <tr>
+            <th>Retailer</th>
+            <th>Operating Score</th>
+            <th>Revenue</th>
+            <th>Mix</th>
+            <th>Repeat</th>
+            <th>Share</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in retailer_rows %}
+          <tr data-retailer="{{ (row.retailer_name ~ ' ' ~ row.location_label)|lower }}">
+            <td>
+              <div class="fw-bold">{{ row.retailer_name }}</div>
+              <div class="retailer-location">{{ row.location_label }}</div>
+              <div class="retailer-tag-row">
+                <span class="badge {% if row.health_tone == 'green' %}badge-green{% elif row.health_tone == 'amber' %}badge-amber{% elif row.health_tone == 'red' %}badge-red{% else %}badge-blue{% endif %}">{{ row.health_band }}</span>
+                {% for tag in row.tags %}
+                <span class="badge {{ tag.class }}">{{ tag.label }}</span>
+                {% endfor %}
+              </div>
+            </td>
+            <td style="min-width:180px;">
+              <div class="retailer-score">
+                <div class="retailer-score-row">
+                  <strong>{{ "{:,.1f}".format(row.health_score) }}</strong>
+                  <span class="text-muted fs-sm">{{ row.health_band }}</span>
+                </div>
+                <div class="retailer-score-track">
+                  <div class="retailer-score-fill {{ row.health_tone }}" style="width:{{ row.health_score }}%;"></div>
+                </div>
+              </div>
+            </td>
+            <td>
+              <div class="fw-bold">₦{{ "{:,.2f}".format(row.total_revenue) }}</div>
+              {% if row.revenue_mom is not none %}
+              <div class="fs-sm {% if row.revenue_mom >= 0 %}text-green{% else %}text-red{% endif %}">{{ "%+.1f"|format(row.revenue_mom) }}% vs prior period</div>
+              {% else %}
+              <div class="fs-sm text-muted">No prior comparison</div>
+              {% endif %}
+            </td>
+            <td>
+              <div class="fw-bold">{{ row.active_brands }} brands</div>
+              <div class="fs-sm text-muted">{{ row.unique_skus }} SKUs · {{ row.transactions }} transactions</div>
+            </td>
+            <td>
+              <div class="fw-bold">{{ "{:,.1f}".format(row.repeat_rate) }}%</div>
+              <div class="fs-sm text-muted">{{ row.active_days }} active days</div>
+            </td>
+            <td class="retailer-share">
+              <strong>{{ "{:,.1f}".format(row.portfolio_share_pct) }}%</strong>
+              <div class="retailer-score-track">
+                <div class="retailer-score-fill blue" style="width:{{ row.portfolio_share_pct }}%;"></div>
+              </div>
+            </td>
+            <td>
+              <div class="retailer-table-actions">
+                <a class="btn btn-outline btn-sm" href="{{ clean_url_for('retailer_detail', retailer_code=row.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Open</a>
+                <a class="btn btn-outline btn-sm" href="{{ clean_url_for('activity_intelligence', store=row.retailer_code, report_id=report.id if report else None) }}">Activity</a>
+                <a class="btn btn-outline btn-sm" target="_blank" href="{{ clean_url_for('retailer_report_page', retailer_code=row.retailer_code, month=selected_month, report_id=report.id if report else None) }}">Report</a>
+                <a class="btn btn-primary btn-sm" href="{{ clean_url_for('api_retailer_report_pdf', retailer_code=row.retailer_code, month=selected_month, report_id=report.id if report else None) }}">PDF</a>
+              </div>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="7">
+              <div class="retailer-empty">No retailer rows are available for this view.</div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
 </div>
 {% endif %}
 {% endblock %}
 
 {% block scripts %}
 <script>
+const retailerRows = {{ retailer_rows|tojson if not error else '[]' }};
+
 async function pollCoachJob(jobId) {
   const statusEl = document.getElementById('coachOpsStatus');
   if (!statusEl) return;
@@ -260,20 +612,95 @@ async function validateThresholds() {
   const res = await fetch('/api/coach/thresholds/validate?' + params.toString());
   const data = await res.json();
   if (!data.success) {
-    statusEl.textContent = data.error || 'Signal validation failed.';
+    statusEl.textContent = data.error || 'Threshold validation failed.';
     return;
   }
-  const topSignal = Object.entries(data.signal_counts || {}).sort((a, b) => b[1] - a[1])[0];
-  statusEl.textContent = topSignal ? ('Top signal: ' + topSignal[0] + ' (' + topSignal[1] + ')') : 'No signals fired for this period.';
+  const signals = data.signal_counts || {};
+  const totalSignals = Object.values(signals).reduce((sum, value) => sum + Number(value || 0), 0);
+  statusEl.textContent = `Validation complete · ${data.target_count || 0} entities · ${totalSignals} signals`;
 }
 
-  const retailerSearch = document.getElementById('retailerSearch');
-  retailerSearch?.addEventListener('input', () => {
-    const needle = retailerSearch.value.trim().toLowerCase();
-    document.querySelectorAll('#retailerTable tbody tr').forEach((row) => {
-      const haystack = row.getAttribute('data-retailer') || '';
-      row.style.display = !needle || haystack.includes(needle) ? '' : 'none';
-    });
+document.getElementById('retailerSearch')?.addEventListener('input', (event) => {
+  const term = (event.target.value || '').trim().toLowerCase();
+  document.querySelectorAll('#retailerTable tbody tr[data-retailer]').forEach((row) => {
+    row.style.display = row.dataset.retailer.includes(term) ? '' : 'none';
   });
+});
+
+const revenueCtx = document.getElementById('retailerRevenueChart');
+if (revenueCtx && retailerRows.length && window.Chart) {
+  const topRows = retailerRows.slice(0, 8);
+  new Chart(revenueCtx, {
+    type: 'bar',
+    data: {
+      labels: topRows.map((row) => row.chain_name || row.retailer_name),
+      datasets: [{
+        data: topRows.map((row) => row.total_revenue || 0),
+        borderRadius: 10,
+        backgroundColor: topRows.map((row, idx) => idx === 0 ? '#1B2B5E' : '#4B6CB7')
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#7280A0' }, grid: { display: false } },
+        y: {
+          ticks: { color: '#7280A0', callback: (value) => '₦' + Number(value || 0).toLocaleString() },
+          grid: { color: 'rgba(27,43,94,.08)' }
+        }
+      }
+    }
+  });
+}
+
+const repeatCtx = document.getElementById('retailerRepeatChart');
+if (repeatCtx && retailerRows.length && window.Chart) {
+  const topRows = retailerRows.slice(0, 8);
+  new Chart(repeatCtx, {
+    type: 'line',
+    data: {
+      labels: topRows.map((row) => row.chain_name || row.retailer_name),
+      datasets: [{
+        label: 'Repeat depth',
+        data: topRows.map((row) => row.repeat_rate || 0),
+        borderColor: '#1E8449',
+        backgroundColor: 'rgba(30,132,73,.12)',
+        borderWidth: 2,
+        pointRadius: 4,
+        tension: .28,
+        fill: true
+      }, {
+        label: 'Brand mix',
+        data: topRows.map((row) => row.active_brands || 0),
+        borderColor: '#C0922A',
+        backgroundColor: 'rgba(192,146,42,.08)',
+        borderWidth: 2,
+        pointRadius: 4,
+        tension: .24,
+        fill: false,
+        yAxisID: 'y1'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#7280A0' } } },
+      scales: {
+        x: { ticks: { color: '#7280A0' }, grid: { display: false } },
+        y: {
+          ticks: { color: '#7280A0', callback: (value) => Number(value || 0).toFixed(0) + '%' },
+          grid: { color: 'rgba(27,43,94,.08)' }
+        },
+        y1: {
+          position: 'right',
+          ticks: { color: '#7280A0' },
+          grid: { drawOnChartArea: false }
+        }
+      }
+    }
+  });
+}
 </script>
 {% endblock %}

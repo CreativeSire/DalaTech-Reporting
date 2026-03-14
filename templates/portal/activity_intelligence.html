@@ -6,6 +6,9 @@
 <span class="text-muted fs-sm">
   {% if report %}Linked to {{ report.month_label }}{% else %}No linked sales report{% endif %}
 </span>
+{% if selected_store %}
+<span class="badge badge-blue">{{ selected_store }}</span>
+{% endif %}
 {% endblock %}
 
 {% block head %}
@@ -26,6 +29,10 @@
   .activity-progress-fill { height:100%; width:0%; background:linear-gradient(90deg,var(--navy) 0%, var(--blue) 100%); border-radius:999px; transition:width .25s ease; }
   .activity-progress-note { margin-top:10px; font-size:12px; color:var(--muted); line-height:1.6; }
   .activity-progress-summary { margin-top:8px; font-size:12px; color:var(--navy); font-weight:700; }
+  .scope-card { margin-bottom:24px; }
+  .scope-card form { display:grid; grid-template-columns:1.1fr 1fr auto; gap:16px; align-items:end; }
+  .scope-note { margin-top:10px; font-size:12px; color:var(--muted); line-height:1.6; }
+  @media(max-width:900px){ .scope-card form { grid-template-columns:1fr; } }
   @media(max-width:900px){ .summary-grid,.split-grid { grid-template-columns:1fr; } }
 </style>
 {% endblock %}
@@ -74,6 +81,47 @@
   </div>
 </div>
 
+<div class="card scope-card">
+  <div class="flex items-center justify-between mb-2">
+    <div>
+      <h3 class="text-navy fw-bold">Activity Scope</h3>
+      <p class="text-muted fs-sm">Switch between the full activity view and a specific supermarket context.</p>
+    </div>
+  </div>
+  <form method="get" action="{{ url_for('activity_intelligence') }}">
+    <div class="form-group">
+      <label class="form-label">Linked Report</label>
+      <select class="form-control" name="report_id">
+        {% for item in reports %}
+        <option value="{{ item.id }}" {% if report and item.id == report.id %}selected{% endif %}>{{ item.month_label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Retailer Focus</label>
+      <select class="form-control" name="store">
+        <option value="">All retailers</option>
+        {% for item in available_stores %}
+        <option value="{{ item.retailer_code }}" {% if selected_store == item.retailer_code %}selected{% endif %}>{{ item.retailer_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      {% if selected_brand %}
+      <input type="hidden" name="brand" value="{{ selected_brand }}">
+      {% endif %}
+      <button class="btn btn-outline" type="submit">Apply Scope</button>
+    </div>
+  </form>
+  <div class="scope-note">
+    {% if selected_store %}
+    Activity is filtered to {{ summary.store_name or selected_store }} for the current report.
+    {% else %}
+    You are viewing the full activity summary across the selected report context.
+    {% endif %}
+  </div>
+</div>
+
 <div class="card mb-3">
   <div class="summary-banner">
     <div class="summary-banner-copy">
@@ -87,7 +135,11 @@
       </div>
       {% else %}
       <div class="summary-banner-text">
+        {% if selected_store %}
+        No linked field activity has been imported yet for {{ summary.store_name or selected_store }} in this report context.
+        {% else %}
         Upload an activity file to see a clean summary of visits, stores, issues, and opportunities here.
+        {% endif %}
       </div>
       {% endif %}
     </div>
@@ -100,6 +152,9 @@
       {% endif %}
       {% if selected_brand %}
       <span class="badge badge-amber">{{ selected_brand }}</span>
+      {% endif %}
+      {% if selected_store %}
+      <span class="badge badge-blue">Store Focus</span>
       {% endif %}
     </div>
   </div>
