@@ -136,6 +136,69 @@
       flex-shrink: 0;
     }
 
+    .coach-strip {
+      margin: 0 14px 8px;
+      padding: 9px 11px;
+      border-radius: 7px;
+      background: linear-gradient(135deg, #1B2B5E 0%, #274288 100%);
+      color: #fff;
+      box-shadow: 0 3px 10px rgba(27,43,94,0.12);
+      flex-shrink: 0;
+    }
+    .coach-strip-kicker {
+      font-size: 5.2pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      opacity: .75;
+      margin-bottom: 3px;
+    }
+    .coach-strip-headline {
+      font-size: 12pt;
+      font-weight: 800;
+      margin-bottom: 3px;
+      line-height: 1.15;
+    }
+    .coach-strip-summary {
+      font-size: 6pt;
+      line-height: 1.45;
+      color: rgba(255,255,255,.84);
+      margin-bottom: 7px;
+    }
+    .coach-strip-grid {
+      display: flex;
+      gap: 8px;
+    }
+    .coach-box {
+      flex: 1;
+      background: rgba(255,255,255,.08);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 6px;
+      padding: 6px 8px;
+    }
+    .coach-box h4 {
+      font-size: 5pt;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      margin-bottom: 4px;
+      color: rgba(255,255,255,.9);
+    }
+    .coach-box ul {
+      margin-left: 12px;
+      font-size: 5.2pt;
+      line-height: 1.5;
+      color: rgba(255,255,255,.84);
+    }
+    .coach-signal {
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255,255,255,.12);
+      font-size: 5.1pt;
+      line-height: 1.4;
+    }
+    .coach-signal:last-child { border-bottom: 0; padding-bottom: 0; }
+    .coach-signal strong { display: block; margin-bottom: 2px; }
+
     .snap-row {
       display: flex;
       gap: 5px;
@@ -1221,6 +1284,31 @@
     </div><!-- /row 3 -->
 
   </div><!-- /snapshot -->
+
+  {% if coach and coach.summary %}
+  <div class="coach-strip">
+    <div class="coach-strip-kicker">Sales Coach</div>
+    <div class="coach-strip-headline">{{ coach.summary.headline }}</div>
+    <div class="coach-strip-summary">{{ coach.summary.summary }}</div>
+    <div class="coach-strip-grid">
+      <div class="coach-box">
+        <h4>Priority Actions</h4>
+        <ul>{% for action in coach.summary.recommended_actions[:4] %}<li>{{ action }}</li>{% endfor %}</ul>
+      </div>
+      <div class="coach-box">
+        <h4>Open Signals</h4>
+        {% for signal in coach.signals[:3] %}
+        <div class="coach-signal">
+          <strong>{{ signal.evidence.title }}</strong>
+          <span>{{ signal.evidence.message }}</span>
+        </div>
+        {% else %}
+        <div class="coach-signal">No major coach signal is open for this brand in the selected period.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
 
   <!-- ── Narrative ───────────────────────────────────────────────────────── -->
   <div class="content-area">

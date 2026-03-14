@@ -589,10 +589,15 @@ class DataStore:
                     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
                     brand_name         TEXT NOT NULL,
                     report_id          INTEGER,
+                    scope_type         TEXT DEFAULT 'brand',
+                    scope_key          TEXT,
                     recommendation_key TEXT NOT NULL,
+                    recommendation_label TEXT,
                     outcome_type       TEXT NOT NULL,
                     outcome_value      REAL,
+                    actor              TEXT,
                     note               TEXT,
+                    metadata_json      TEXT DEFAULT '{}',
                     created_at         TEXT NOT NULL,
                     FOREIGN KEY (report_id) REFERENCES reports(id)
                 );
@@ -750,6 +755,25 @@ class DataStore:
                        updated_at=COALESCE(updated_at, created_at),
                        payload_json=COALESCE(payload_json, '{}'),
                        last_result=COALESCE(last_result, '{}')"""
+            )
+            recommendation_cols = [r[1] for r in conn.execute("PRAGMA table_info(recommendation_outcomes)").fetchall()]
+            if 'scope_type' not in recommendation_cols:
+                conn.execute("ALTER TABLE recommendation_outcomes ADD COLUMN scope_type TEXT DEFAULT 'brand'")
+            if 'scope_key' not in recommendation_cols:
+                conn.execute("ALTER TABLE recommendation_outcomes ADD COLUMN scope_key TEXT")
+            if 'recommendation_label' not in recommendation_cols:
+                conn.execute("ALTER TABLE recommendation_outcomes ADD COLUMN recommendation_label TEXT")
+            if 'actor' not in recommendation_cols:
+                conn.execute("ALTER TABLE recommendation_outcomes ADD COLUMN actor TEXT")
+            if 'metadata_json' not in recommendation_cols:
+                conn.execute("ALTER TABLE recommendation_outcomes ADD COLUMN metadata_json TEXT DEFAULT '{}'")
+            conn.execute(
+                """UPDATE recommendation_outcomes
+                   SET scope_type=COALESCE(scope_type, 'brand'),
+                       scope_key=COALESCE(scope_key, brand_name),
+                       recommendation_label=COALESCE(recommendation_label, recommendation_key),
+                       actor=COALESCE(actor, 'system'),
+                       metadata_json=COALESCE(metadata_json, '{}')"""
             )
             queue_cols = [r[1] for r in conn.execute("PRAGMA table_info(catalog_review_queue)").fetchall()]
             if 'suggested_match_name' not in queue_cols:
@@ -3287,28 +3311,82 @@ class DataStore:
         return self.get_agent_action(action_id)
 
     def save_recommendation_outcome(self, brand_name, recommendation_key, outcome_type,
-                                    outcome_value=None, note=None, report_id=None):
-        brand_name = self.normalize_brand_name(brand_name)
+                                    outcome_value=None, note=None, report_id=None,
+                                    scope_type=None, scope_key=None,
+                                    recommendation_label=None, actor=None,
+                                    metadata=None):
+        brand_name = self.normalize_brand_name(brand_name) if brand_name else str(scope_key or '')
+        scope_type = str(scope_type or ('brand' if brand_name else 'portfolio')).strip().lower() or 'brand'
+        scope_key = str(scope_key or brand_name or '').strip()
         now = datetime.now().isoformat(timespec='seconds')
         with self._connect() as conn:
             conn.execute(
                 """INSERT INTO recommendation_outcomes
-                   (brand_name, report_id, recommendation_key, outcome_type, outcome_value, note, created_at)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (brand_name, report_id, recommendation_key, outcome_type, outcome_value, note, now)
+                   (brand_name, report_id, scope_type, scope_key, recommendation_key,
+                    recommendation_label, outcome_type, outcome_value, actor, note, metadata_json, created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    brand_name,
+                    report_id,
+                    scope_type,
+                    scope_key,
+                    recommendation_key,
+                    recommendation_label or recommendation_key,
+                    outcome_type,
+                    outcome_value,
+                    actor,
+                    note,
+                    json.dumps(metadata or {}, default=str),
+                    now,
+                )
             )
 
-    def get_recommendation_outcome_scores(self, brand_name=None):
+    def list_recommendation_outcomes(self, scope_type=None, scope_key=None, recommendation_key=None, limit=100):
+        clauses = []
+        params = []
+        if scope_type:
+            clauses.append("scope_type=?")
+            params.append(scope_type)
+        if scope_key:
+            clauses.append("scope_key=?")
+            params.append(scope_key)
+        if recommendation_key:
+            clauses.append("recommendation_key=?")
+            params.append(recommendation_key)
+        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ''
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT * FROM recommendation_outcomes
+                    {where_clause}
+                    ORDER BY created_at DESC
+                    LIMIT ?""",
+                (*params, limit)
+            ).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            item['metadata'] = self._safe_json_loads(item.get('metadata_json') or '{}', {})
+            items.append(item)
+        return items
+
+    def get_recommendation_outcome_scores(self, brand_name=None, scope_type=None, scope_key=None):
         clauses = []
         params = []
         if brand_name:
             brand_name = self.normalize_brand_name(brand_name)
             clauses.append("brand_name=?")
             params.append(brand_name)
+        if scope_type:
+            clauses.append("scope_type=?")
+            params.append(scope_type)
+        if scope_key:
+            clauses.append("scope_key=?")
+            params.append(scope_key)
         where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ''
         with self._connect() as conn:
             rows = conn.execute(
                 f"""SELECT recommendation_key,
+                           MAX(recommendation_label) AS recommendation_label,
                            COUNT(*) AS total_events,
                            COALESCE(SUM(CASE
                                WHEN outcome_type IN ('success', 'approved', 'improved', 'positive') THEN COALESCE(outcome_value, 1)
@@ -3322,6 +3400,7 @@ class DataStore:
             ).fetchall()
         return {
             row['recommendation_key']: {
+                'recommendation_label': row['recommendation_label'],
                 'total_events': row['total_events'],
                 'weighted_score': float(row['weighted_score'] or 0),
             }

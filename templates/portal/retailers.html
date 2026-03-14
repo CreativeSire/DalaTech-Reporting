@@ -14,6 +14,8 @@
   .retailer-table-actions { display:flex; gap:8px; flex-wrap:wrap; }
   .retailer-tag-row { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
   .retailer-search { min-width:240px; }
+  .coach-ops { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .coach-ops-status { font-size:12px; color:var(--muted); }
 </style>
 {% endblock %}
 
@@ -39,6 +41,12 @@
     <div>
       <h3 class="text-navy fw-bold mb-1">Retailer Command Surface</h3>
       <p class="text-muted fs-sm mb-0">Use this page for supermarket-level intelligence: sales, coverage, reorder depth, and coach signals.</p>
+    </div>
+    <div class="coach-ops">
+      <button class="btn btn-outline btn-sm" type="button" onclick="runCoachJob('current')">Refresh Coach</button>
+      <button class="btn btn-outline btn-sm" type="button" onclick="runCoachJob('backfill_recent')">Backfill Recent</button>
+      <button class="btn btn-outline btn-sm" type="button" onclick="validateThresholds()">Validate Signals</button>
+      <span id="coachOpsStatus" class="coach-ops-status"></span>
     </div>
     <form method="get" action="{{ url_for('retailers') }}">
       {% if report %}
@@ -192,6 +200,73 @@
 
 {% block scripts %}
 <script>
+async function pollCoachJob(jobId) {
+  const statusEl = document.getElementById('coachOpsStatus');
+  if (!statusEl) return;
+  for (let i = 0; i < 90; i += 1) {
+    const res = await fetch('/api/coach/job/' + encodeURIComponent(jobId));
+    const data = await res.json();
+    if (!data.success) {
+      statusEl.textContent = data.error || 'Coach job failed.';
+      return;
+    }
+    statusEl.textContent = (data.current_brand || 'Running coach job') + ' · ' + (data.progress || 0) + '%';
+    if (data.status === 'done') {
+      statusEl.textContent = 'Coach job complete.';
+      return;
+    }
+    if (data.status === 'error') {
+      statusEl.textContent = data.error_msg || 'Coach job failed.';
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  statusEl.textContent = 'Coach job still running.';
+}
+
+async function runCoachJob(mode) {
+  const payload = {
+    mode,
+    include_pairs: true,
+    report_id: {{ (report.id if report else none)|tojson }},
+    month: {{ selected_month|tojson }},
+    monthly_count: 6,
+    weekly_count: 4
+  };
+  const res = await fetch('/api/coach/backfill', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  const statusEl = document.getElementById('coachOpsStatus');
+  if (!data.success) {
+    statusEl.textContent = data.error || 'Unable to start coach job.';
+    return;
+  }
+  statusEl.textContent = 'Coach job queued.';
+  pollCoachJob(data.job_id);
+}
+
+async function validateThresholds() {
+  const statusEl = document.getElementById('coachOpsStatus');
+  const params = new URLSearchParams();
+  {% if report %}
+  params.set('report_id', '{{ report.id }}');
+  {% endif %}
+  {% if selected_month %}
+  params.set('month', '{{ selected_month }}');
+  {% endif %}
+  const res = await fetch('/api/coach/thresholds/validate?' + params.toString());
+  const data = await res.json();
+  if (!data.success) {
+    statusEl.textContent = data.error || 'Signal validation failed.';
+    return;
+  }
+  const topSignal = Object.entries(data.signal_counts || {}).sort((a, b) => b[1] - a[1])[0];
+  statusEl.textContent = topSignal ? ('Top signal: ' + topSignal[0] + ' (' + topSignal[1] + ')') : 'No signals fired for this period.';
+}
+
   const retailerSearch = document.getElementById('retailerSearch');
   retailerSearch?.addEventListener('input', () => {
     const needle = retailerSearch.value.trim().toLowerCase();

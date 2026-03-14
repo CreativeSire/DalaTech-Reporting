@@ -19,6 +19,10 @@
   .opportunity-list { display:flex; flex-direction:column; gap:10px; }
   .opportunity-item { display:flex; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--gray); }
   .coach-evidence { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .coach-reco-list { display:flex; flex-direction:column; gap:10px; margin-top:10px; }
+  .coach-reco-item { padding:10px 12px; border-radius:12px; border:1px solid var(--gray); background:#fbfcff; }
+  .coach-reco-meta { display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+  .coach-reco-actions { display:flex; gap:8px; flex-wrap:wrap; }
 </style>
 {% endblock %}
 
@@ -73,6 +77,15 @@
     <div class="card">
       <h4 class="text-navy fw-bold mb-2">{{ coach.summary.headline }}</h4>
       <p class="text-muted fs-sm">{{ coach.summary.summary }}</p>
+      <div class="coach-actions">
+        {% for item in coach.action_items %}
+          {% if item.url %}
+          <a class="btn btn-outline btn-sm" href="{{ item.url }}" {% if item.kind == 'report' %}target="_blank"{% endif %}>{{ item.label }}</a>
+          {% elif item.api_path %}
+          <button class="btn btn-outline btn-sm" type="button" onclick='runCoachAction({{ item|tojson }})'>{{ item.label }}</button>
+          {% endif %}
+        {% endfor %}
+      </div>
       <div class="coach-evidence">
         {% for signal in coach.signals[:4] %}
         <span class="badge {% if signal.severity == 'critical' or signal.severity == 'high' %}badge-red{% elif signal.severity == 'medium' %}badge-amber{% else %}badge-muted{% endif %}">{{ signal.signal_type|replace('_', ' ')|title }}</span>
@@ -80,11 +93,26 @@
       </div>
       <div style="margin-top:14px;">
         <div class="kpi-label">Recommended next actions</div>
-        <ul class="fs-sm text-muted" style="margin:8px 0 0 18px;">
-          {% for action in coach.summary.recommended_actions %}
-          <li>{{ action }}</li>
+        <div class="coach-reco-list">
+          {% for action in coach.recommendation_items[:4] %}
+          <div class="coach-reco-item">
+            <div class="fw-bold">{{ action.label }}</div>
+            <div class="coach-reco-meta">
+              <span class="fs-sm text-muted">Outcome score {{ "{:+.1f}".format(action.weighted_score or 0) }} · {{ action.total_events or 0 }} events</span>
+              <div class="coach-reco-actions">
+                <button class="btn btn-outline btn-sm" type="button" onclick='recordCoachOutcome({{ action|tojson }}, "positive", 1)'>Worked</button>
+                <button class="btn btn-outline btn-sm" type="button" onclick='recordCoachOutcome({{ action|tojson }}, "negative", -1)'>Didn’t Help</button>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <ul class="fs-sm text-muted" style="margin:8px 0 0 18px;">
+            {% for action in coach.summary.recommended_actions %}
+            <li>{{ action }}</li>
+            {% endfor %}
+          </ul>
           {% endfor %}
-        </ul>
+        </div>
       </div>
     </div>
 
@@ -214,6 +242,41 @@
 
 {% block scripts %}
 <script>
+  async function runCoachAction(item) {
+    if (!item || !item.api_path) return;
+    const payload = Object.assign({}, item.payload || {});
+    if (item.kind === 'schedule') {
+      payload.status = 'active';
+      payload.next_run = payload.next_run || new Date(Date.now() + 86400000).toISOString().slice(0, 19);
+    }
+    const res = await fetch(item.api_path, {
+      method: item.method || 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    alert(data.message || data.error || (data.success ? 'Action completed.' : 'Action failed.'));
+  }
+
+  async function recordCoachOutcome(item, outcomeType, outcomeValue) {
+    const payload = {
+      scope_type: 'retailer',
+      scope_key: {{ retailer_code|tojson }},
+      report_id: {{ (report.id if report else none)|tojson }},
+      recommendation_key: item.recommendation_key,
+      recommendation_label: item.label,
+      outcome_type: outcomeType,
+      outcome_value: outcomeValue
+    };
+    const res = await fetch('/api/coach/recommendations/outcome', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    alert(data.success ? 'Outcome recorded.' : (data.error || 'Failed to record outcome.'));
+  }
+
   const retailerHistory = {{ detail.historical|tojson if detail else '[]' }};
   const retailerCtx = document.getElementById('retailerHistoryChart');
   if (retailerCtx && window.Chart && retailerHistory.length) {

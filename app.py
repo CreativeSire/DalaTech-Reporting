@@ -57,7 +57,8 @@ from modules.coach_features   import (
     build_retailer_detail,
     build_brand_coach_data,
 )
-from modules.coach_signals    import build_coach_payload
+from modules.coach_signals    import build_coach_payload, get_signal_thresholds
+from modules.coach_operations import run_coach_refresh, backfill_recent_periods, validate_signal_quality
 from modules.historical       import (
     get_brand_monthly_history, get_portfolio_monthly_trend,
     get_repeat_purchase_map_data, get_store_repeat_analysis, generate_insights,
@@ -175,11 +176,11 @@ def _attach_reorder_trend(brand_name: str, kpis: dict | None,
     return kpis
 
 
-def _coach_summary_for_snapshot(snapshot: dict | None, persist: bool = True) -> dict:
+def _coach_summary_for_snapshot(snapshot: dict | None, persist: bool = True, use_gemini: bool = True) -> dict:
     if not snapshot:
-        return {'summary': {'headline': 'Coach summary unavailable', 'summary': 'No data is available for this scope yet.', 'recommended_actions': [], 'used_gemini': False}, 'signals': []}
+        return {'summary': {'headline': 'Coach summary unavailable', 'summary': 'No data is available for this scope yet.', 'recommended_actions': [], 'used_gemini': False}, 'signals': [], 'action_items': [], 'recommendation_items': []}
     try:
-        payload = build_coach_payload(ds, snapshot, persist=persist, use_gemini=True)
+        payload = build_coach_payload(ds, snapshot, persist=persist, use_gemini=use_gemini)
         ds.save_coach_run(
             run_type='coach_summary',
             scope_type=snapshot.get('scope_type') or 'portfolio',
@@ -198,7 +199,87 @@ def _coach_summary_for_snapshot(snapshot: dict | None, persist: bool = True) -> 
                 'used_gemini': False,
             },
             'signals': [],
+            'action_items': [],
+            'recommendation_items': [],
         }
+
+
+def _run_coach_refresh_job(job_id: str, mode: str = 'current', report_id: int | None = None,
+                           month_value: str | None = None, monthly_count: int = 6,
+                           weekly_count: int = 4, include_pairs: bool = True,
+                           source: str = 'manual'):
+    def _progress(progress_value: int, message: str):
+        ds.update_job(job_id, progress=max(1, min(int(progress_value), 99)), current_brand=message, report_id=report_id)
+
+    try:
+        ds.update_job(job_id, progress=2, current_brand='Preparing coach refresh', report_id=report_id)
+        if mode == 'backfill_recent':
+            result = backfill_recent_periods(
+                ds,
+                monthly_count=monthly_count,
+                weekly_count=weekly_count,
+                include_pairs=include_pairs,
+                progress_cb=_progress,
+            )
+        else:
+            result = run_coach_refresh(
+                ds,
+                report_id=report_id,
+                month_value=month_value,
+                include_pairs=include_pairs,
+                persist=True,
+                progress_cb=_progress,
+            )
+        ds.save_coach_run(
+            run_type='coach_refresh',
+            scope_type='portfolio',
+            scope_key=month_value or str(report_id or 'latest'),
+            report_id=result.get('report_id') or report_id,
+            result=result,
+            status='completed',
+        )
+        ds.update_job(
+            job_id,
+            status='done',
+            progress=100,
+            current_brand='Coach refresh complete',
+            report_id=result.get('report_id') or report_id,
+            result_json={'mode': mode, 'source': source, **result},
+        )
+    except Exception as exc:
+        ds.save_coach_run(
+            run_type='coach_refresh',
+            scope_type='portfolio',
+            scope_key=month_value or str(report_id or 'latest'),
+            report_id=report_id,
+            result={'mode': mode, 'source': source, 'error': str(exc)},
+            status='failed',
+        )
+        ds.update_job(job_id, status='error', current_brand='Coach refresh failed', report_id=report_id, error_msg=str(exc))
+
+
+def _launch_coach_refresh_job(mode: str = 'current', report_id: int | None = None,
+                              month_value: str | None = None, monthly_count: int = 6,
+                              weekly_count: int = 4, include_pairs: bool = True,
+                              source: str = 'manual') -> str:
+    job_id = uuid.uuid4().hex
+    ds.create_job(job_id)
+    thread = threading.Thread(
+        target=_run_coach_refresh_job,
+        args=(job_id,),
+        kwargs={
+            'mode': mode,
+            'report_id': report_id,
+            'month_value': month_value,
+            'monthly_count': monthly_count,
+            'weekly_count': weekly_count,
+            'include_pairs': include_pairs,
+            'source': source,
+        },
+        daemon=True,
+    )
+    thread.start()
+    return job_id
 
 
 def _compute_and_save_churn(report_id: int):
@@ -1057,6 +1138,8 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             for attempt in range(max_retries):
                 try:
                     report_context = _brand_report_context(brand_name, cutoff_date=end_date)
+                    coach_snapshot = build_scope_snapshot(ds, 'brand', scope_key=brand_name, report_id=report_id, persist=True) if coach_history_available() else None
+                    coach = _coach_summary_for_snapshot(coach_snapshot, persist=True, use_gemini=False) if coach_snapshot else None
                     result_path = generate_pdf_html(
                         output_path=pdf_path, brand_name=brand_name, kpis=kpis,
                         start_date=start_date, end_date=end_date,
@@ -1068,6 +1151,7 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                         sheets_url=sheets_urls.get(brand_name),
                         growth_outlook=report_context.get('growth_outlook'),
                         gmv_window=report_context.get('gmv_window'),
+                        coach=coach,
                     )
                     # Check if PDF was actually created or if HTML fallback was used
                     is_pdf = result_path.endswith('.pdf') and os.path.exists(result_path)
@@ -1090,6 +1174,8 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             for attempt in range(max_retries):
                 try:
                     report_context = _brand_report_context(brand_name, cutoff_date=end_date)
+                    coach_snapshot = build_scope_snapshot(ds, 'brand', scope_key=brand_name, report_id=report_id, persist=True) if coach_history_available() else None
+                    coach = _coach_summary_for_snapshot(coach_snapshot, persist=True, use_gemini=False) if coach_snapshot else None
                     generate_html(output_path=html_path, brand_name=brand_name, kpis=kpis,
                                   start_date=start_date, end_date=end_date,
                                   portfolio_avg_revenue=portfolio_avg_revenue,
@@ -1097,7 +1183,8 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                                   report_type=report_type or report_meta.get('report_type'),
                                   month_label=report_meta.get('month_label'),
                                   growth_outlook=report_context.get('growth_outlook'),
-                                  gmv_window=report_context.get('gmv_window'))
+                                  gmv_window=report_context.get('gmv_window'),
+                                  coach=coach)
                     return True, None
                 except Exception as e:
                     if attempt < max_retries - 1:
@@ -1165,8 +1252,19 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
             reason=f'report_generation:{filename}',
             source='report_generation',
         )
+        coach_job_id = _launch_coach_refresh_job(
+            mode='current',
+            report_id=report_id,
+            include_pairs=True,
+            source='report_generation',
+        )
         _upd(progress=100, status='done', current_brand=None,
-             portfolio_file=portfolio_filename)
+             portfolio_file=portfolio_filename,
+             result_json={
+                 'report_id': report_id,
+                 'portfolio_file': portfolio_filename,
+                 'coach_job_id': coach_job_id,
+             })
 
     except Exception as exc:
         _upd(status='error', error_msg=str(exc))
@@ -1769,6 +1867,8 @@ def generate():
         check_and_save_alerts(report_id, brand_name, kpis,
                               portfolio_avg_revenue, history[1:], ds)
         report_context = _brand_report_context(brand_name, cutoff_date=end_date)
+        coach_snapshot = build_scope_snapshot(ds, 'brand', scope_key=brand_name, report_id=report_id, persist=True) if coach_history_available() else None
+        coach = _coach_summary_for_snapshot(coach_snapshot, persist=True, use_gemini=False) if coach_snapshot else None
 
         # PDF
         try:
@@ -1784,6 +1884,7 @@ def generate():
                 month_label=report_meta.get('month_label'),
                 growth_outlook=report_context.get('growth_outlook'),
                 gmv_window=report_context.get('gmv_window'),
+                coach=coach,
             )
             ok_pdf += 1
         except Exception as e:
@@ -1803,6 +1904,7 @@ def generate():
                 month_label=report_meta.get('month_label'),
                 growth_outlook=report_context.get('growth_outlook'),
                 gmv_window=report_context.get('gmv_window'),
+                coach=coach,
             )
             ok_html += 1
         except Exception as e:
@@ -1829,6 +1931,12 @@ def generate():
         reason=f'sync_generate:{file.filename}',
         source='report_generation',
     )
+    coach_job_id = _launch_coach_refresh_job(
+        mode='current',
+        report_id=report_id,
+        include_pairs=True,
+        source='sync_generate',
+    )
 
     return jsonify({
         'success':    True,
@@ -1838,6 +1946,7 @@ def generate():
         'brands':     len(brands),
         'errors':     errors,
         'portfolio_dashboard': f"/download/html/{os.path.basename(portfolio_path)}",
+        'coach_job_id': coach_job_id,
     })
 
 
@@ -2586,6 +2695,8 @@ def _build_brand_report_pdf_bytes(report_id: int, brand_name: str,
     total_portfolio = sum(b['total_revenue'] for b in all_brand_kpis)
     avg_portfolio   = total_portfolio / max(len(all_brand_kpis), 1)
     report_context = _brand_report_context(brand_name, cutoff_date=report.get('end_date'))
+    coach_snapshot = build_scope_snapshot(ds, 'brand', scope_key=brand_name, report_id=report_id, persist=True) if coach_history_available() else None
+    coach = _coach_summary_for_snapshot(coach_snapshot, persist=True, use_gemini=False) if coach_snapshot else {'summary': {'headline': 'Coach summary unavailable', 'summary': 'No coach data available yet.', 'recommended_actions': [], 'used_gemini': False}, 'signals': [], 'action_items': [], 'recommendation_items': []}
 
     # Use the premium 2-page print template (report_template.html)
     html = render_pdf_report_html(
@@ -2599,6 +2710,7 @@ def _build_brand_report_pdf_bytes(report_id: int, brand_name: str,
         month_label=report.get('month_label'),
         growth_outlook=report_context.get('growth_outlook'),
         gmv_window=report_context.get('gmv_window'),
+        coach=coach,
     )
     return render_pdf_bytes(html)
 
@@ -2800,6 +2912,11 @@ def api_report_html(report_id, brand_name):
             month_label=report.get('month_label'),
             growth_outlook=report_context.get('growth_outlook'),
             gmv_window=report_context.get('gmv_window'),
+            coach=_coach_summary_for_snapshot(
+                build_scope_snapshot(ds, 'brand', scope_key=brand_name, report_id=report_id, persist=True),
+                persist=True,
+                use_gemini=False,
+            ) if coach_history_available() else None,
         )
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -3509,6 +3626,12 @@ def api_activity_import():
                 reason=f'activity_import:{filename}',
                 source='activity_import',
             )
+            coach_job_id = _launch_coach_refresh_job(
+                mode='current',
+                report_id=report_id,
+                include_pairs=True,
+                source='activity_import',
+            ) if report_id else None
 
             ds.update_job(
                 job_id,
@@ -3520,6 +3643,7 @@ def api_activity_import():
                     'batch_id': batch_id,
                     'report_id': report_id,
                     'summary': payload.get('summary', {}),
+                    'coach_job_id': coach_job_id,
                 },
             )
         except Exception as exc:
@@ -3625,12 +3749,171 @@ def api_coach_summary():
         scope_key = retailer_code
     snapshot = build_scope_snapshot(ds, scope_type, scope_key=scope_key, report_id=report_id, month_value=month_value, retailer_code=retailer_code, persist=True)
     coach = _coach_summary_for_snapshot(snapshot, persist=True)
-    return jsonify({'success': True, 'summary': coach.get('summary'), 'signals': coach.get('signals', []), 'snapshot_meta': {
+    return jsonify({'success': True, 'summary': coach.get('summary'), 'signals': coach.get('signals', []), 'action_items': coach.get('action_items', []), 'recommendation_items': coach.get('recommendation_items', []), 'snapshot_meta': {
         'scope_type': snapshot.get('scope_type'),
         'scope_key': snapshot.get('scope_key'),
         'period_label': snapshot.get('period_label'),
         'report_id': snapshot.get('report_id'),
     }})
+
+
+@app.route('/api/coach/thresholds')
+def api_coach_thresholds():
+    return jsonify({'success': True, 'thresholds': get_signal_thresholds()})
+
+
+@app.route('/api/coach/thresholds/validate')
+def api_coach_thresholds_validate():
+    report_id = request.args.get('report_id', type=int)
+    month_value = (request.args.get('month') or '').strip() or None
+    include_pairs = str(request.args.get('include_pairs', 'false')).lower() in {'1', 'true', 'yes'}
+    sample_limit = min(max(request.args.get('sample_limit', 5, type=int), 1), 15)
+    result = validate_signal_quality(
+        ds,
+        report_id=report_id,
+        month_value=month_value,
+        include_pairs=include_pairs,
+        sample_limit=sample_limit,
+    )
+    return jsonify({'success': True, **result})
+
+
+@app.route('/api/coach/backfill', methods=['POST'])
+def api_coach_backfill():
+    payload = request.get_json(silent=True) or request.form or {}
+    mode = str(payload.get('mode') or 'current').strip().lower()
+    include_pairs = str(payload.get('include_pairs', 'true')).lower() in {'1', 'true', 'yes'}
+    try:
+        report_id = int(payload.get('report_id')) if payload.get('report_id') not in (None, '') else None
+    except Exception:
+        report_id = None
+    month_value = (payload.get('month') or '').strip() or None
+    monthly_count = min(max(int(payload.get('monthly_count') or 6), 1), 24)
+    weekly_count = min(max(int(payload.get('weekly_count') or 4), 0), 24)
+    job_id = _launch_coach_refresh_job(
+        mode=mode,
+        report_id=report_id,
+        month_value=month_value,
+        monthly_count=monthly_count,
+        weekly_count=weekly_count,
+        include_pairs=include_pairs,
+        source='manual_api',
+    )
+    return jsonify({'success': True, 'job_id': job_id})
+
+
+@app.route('/api/coach/job/<job_id>')
+def api_coach_job(job_id):
+    job = ds.get_job(job_id)
+    if not job:
+        return jsonify({'success': False, 'error': 'Job not found'}), 404
+    return jsonify({'success': True, **job})
+
+
+@app.route('/api/coach/pin', methods=['POST'])
+def api_coach_pin():
+    payload = request.get_json(silent=True) or request.form or {}
+    scope_type = str(payload.get('scope_type') or 'portfolio').strip().lower()
+    scope_key = str(payload.get('scope_key') or 'global').strip()
+    try:
+        report_id = int(payload.get('report_id')) if payload.get('report_id') not in (None, '') else None
+    except Exception:
+        report_id = None
+    month_value = (payload.get('month') or '').strip() or None
+    snapshot = build_scope_snapshot(
+        ds,
+        scope_type,
+        scope_key=scope_key if scope_type != 'portfolio' else 'global',
+        report_id=report_id,
+        month_value=month_value,
+        retailer_code=scope_key if scope_type == 'brand_retailer' else None,
+        persist=True,
+    )
+    coach = _coach_summary_for_snapshot(snapshot, persist=True)
+    memory_id = ds.save_agent_memory(
+        scope_type=scope_type,
+        scope_key=scope_key,
+        memory_text=f"{coach.get('summary', {}).get('headline')}: {coach.get('summary', {}).get('summary')}",
+        memory_kind='coach_summary',
+        confidence=0.86,
+        source='coach_pin',
+        memory_layer='workspace',
+        tags=['coach', scope_type, 'pinned'],
+        related_report_id=snapshot.get('report_id'),
+        related_brand=scope_key if scope_type == 'brand' else None,
+        pinned=True,
+        metadata={
+            'signals': [signal.get('signal_type') for signal in coach.get('signals', [])[:6]],
+            'period_label': snapshot.get('period_label'),
+        },
+    )
+    return jsonify({'success': True, 'memory': ds.get_agent_memory(memory_id)})
+
+
+@app.route('/api/coach/recommendations/outcome', methods=['POST'])
+def api_coach_recommendation_outcome():
+    payload = request.get_json(silent=True) or request.form or {}
+    scope_type = str(payload.get('scope_type') or 'brand').strip().lower()
+    scope_key = str(payload.get('scope_key') or '').strip()
+    recommendation_key = str(payload.get('recommendation_key') or '').strip()
+    recommendation_label = str(payload.get('recommendation_label') or recommendation_key).strip()
+    outcome_type = str(payload.get('outcome_type') or '').strip().lower()
+    note = str(payload.get('note') or '').strip() or None
+    if not scope_key or not recommendation_key or not outcome_type:
+        return jsonify({'success': False, 'error': 'scope_key, recommendation_key, and outcome_type are required.'}), 400
+    try:
+        report_id = int(payload.get('report_id')) if payload.get('report_id') not in (None, '') else None
+    except Exception:
+        report_id = None
+    try:
+        outcome_value = float(payload.get('outcome_value')) if payload.get('outcome_value') not in (None, '') else None
+    except Exception:
+        outcome_value = None
+    brand_name = scope_key if scope_type == 'brand' else None
+    ds.save_recommendation_outcome(
+        brand_name=brand_name,
+        recommendation_key=recommendation_key,
+        recommendation_label=recommendation_label,
+        outcome_type=outcome_type,
+        outcome_value=outcome_value,
+        note=note,
+        report_id=report_id,
+        scope_type=scope_type,
+        scope_key=scope_key,
+        actor='portal_user',
+        metadata={'source': 'coach_ui'},
+    )
+    return jsonify({
+        'success': True,
+        'scores': ds.get_recommendation_outcome_scores(
+            brand_name=brand_name,
+            scope_type=scope_type,
+            scope_key=scope_key,
+        ).get(recommendation_key, {})
+    })
+
+
+@app.route('/api/coach/run-due', methods=['POST'])
+def api_coach_run_due():
+    now = datetime.now().isoformat(timespec='seconds')
+    ran = []
+    skipped = []
+    for job in ds.list_assistant_jobs(status='active', limit=250):
+        if job.get('job_type') != 'coach_refresh':
+            continue
+        next_run = str(job.get('next_run') or '').strip()
+        if not next_run or next_run > now:
+            skipped.append(job.get('id'))
+            continue
+        payload = job.get('payload') or {}
+        result = execute_admin_request(
+            ds,
+            'run_schedule_now',
+            arguments={'schedule_id': job.get('id')},
+            report=ds.get_report(payload.get('report_id')) if payload.get('report_id') else ds.get_latest_report(),
+        )
+        ran.append({'schedule_id': job.get('id'), 'status': result.get('status'), 'message': result.get('message')})
+    return jsonify({'success': True, 'ran': ran, 'skipped': skipped})
 
 
 @app.route('/api/copilot/state')

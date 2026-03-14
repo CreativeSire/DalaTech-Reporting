@@ -486,7 +486,8 @@ def render_html_report(brand_name: str, kpis: dict,
                        month_label: str | None = None,
                        ai_narrative: str = None,
                        growth_outlook: dict | None = None,
-                       gmv_window: dict | None = None) -> str:
+                       gmv_window: dict | None = None,
+                       coach: dict | None = None) -> str:
     """Render the standalone interactive HTML report and return the HTML string."""
     # ── Plotly chart divs ─────────────────────────────────────────────────────
     chart_trend    = plotly_dual_trend(kpis['daily_sales'])
@@ -602,6 +603,7 @@ def render_html_report(brand_name: str, kpis: dict,
         growth_outlook=growth_outlook,
         gmv_window=gmv_window,
         gmv_chart_svg=gmv_chart_svg,
+        coach=coach or {},
     )
 
     return html_content
@@ -615,7 +617,8 @@ def generate_html(output_path: str, brand_name: str, kpis: dict,
                   month_label: str | None = None,
                   ai_narrative: str = None,
                   growth_outlook: dict | None = None,
-                  gmv_window: dict | None = None) -> str:
+                  gmv_window: dict | None = None,
+                  coach: dict | None = None) -> str:
     """
     Generate a standalone interactive HTML report using Plotly.
 
@@ -642,6 +645,7 @@ def generate_html(output_path: str, brand_name: str, kpis: dict,
         ai_narrative=ai_narrative,
         growth_outlook=growth_outlook,
         gmv_window=gmv_window,
+        coach=coach,
     )
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)

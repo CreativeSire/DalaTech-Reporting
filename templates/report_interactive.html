@@ -138,6 +138,83 @@
       padding: 14px 16px;
     }
 
+    .coach-strip {
+      margin: 16px 20px 0;
+      padding: 16px 18px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, rgba(27,43,94,0.96), rgba(36,66,146,0.94));
+      color: white;
+      box-shadow: 0 20px 50px rgba(27,43,94,0.18);
+    }
+    .coach-strip-top {
+      display:flex;
+      justify-content:space-between;
+      gap:16px;
+      align-items:flex-start;
+      margin-bottom:14px;
+    }
+    .coach-strip-kicker {
+      font-size:11px;
+      letter-spacing:.8px;
+      text-transform:uppercase;
+      opacity:.75;
+      margin-bottom:6px;
+      font-weight:700;
+    }
+    .coach-strip h3 {
+      font-size:22px;
+      line-height:1.2;
+      margin-bottom:6px;
+    }
+    .coach-strip p {
+      color: rgba(255,255,255,0.82);
+      font-size:13px;
+      line-height:1.55;
+      max-width: 760px;
+    }
+    .coach-pill-row {
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      justify-content:flex-end;
+    }
+    .coach-pill {
+      padding:6px 10px;
+      border-radius:999px;
+      background:rgba(255,255,255,0.14);
+      font-size:11px;
+      font-weight:700;
+    }
+    .coach-grid {
+      display:grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+      gap:16px;
+    }
+    .coach-panel {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .coach-panel h4 {
+      font-size:12px;
+      letter-spacing:.6px;
+      text-transform:uppercase;
+      margin-bottom:10px;
+      color: rgba(255,255,255,0.9);
+    }
+    .coach-panel ul {
+      margin-left: 18px;
+      color: rgba(255,255,255,0.84);
+      line-height:1.6;
+    }
+    .coach-signal-item {
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
+    }
+    .coach-signal-item:last-child { border-bottom: 0; padding-bottom: 0; }
+    .coach-signal-item strong { display:block; margin-bottom:4px; }
+
     .card-title {
       font-size: 12px;
       font-weight: 700;
@@ -863,6 +940,44 @@
       <span class="portfolio-badge">{{ portfolio_share }}% of Portfolio Revenue</span>
     {% endif %}
   </div>
+
+  {% if coach and coach.summary %}
+  <section class="coach-strip">
+    <div class="coach-strip-top">
+      <div>
+        <div class="coach-strip-kicker">Sales Coach</div>
+        <h3>{{ coach.summary.headline }}</h3>
+        <p>{{ coach.summary.summary }}</p>
+      </div>
+      <div class="coach-pill-row">
+        {% for signal in coach.signals[:4] %}
+        <span class="coach-pill">{{ signal.signal_type|replace('_', ' ')|title }}</span>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="coach-grid">
+      <div class="coach-panel">
+        <h4>Priority Actions</h4>
+        <ul>
+          {% for action in coach.summary.recommended_actions %}
+          <li>{{ action }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      <div class="coach-panel">
+        <h4>Open Signals</h4>
+        {% for signal in coach.signals[:3] %}
+        <div class="coach-signal-item">
+          <strong>{{ signal.evidence.title }}</strong>
+          <div>{{ signal.evidence.message }}</div>
+        </div>
+        {% else %}
+        <div>No major coach signals are open for this brand in the selected period.</div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+  {% endif %}
 
   <!-- ════════════════════ SECTION 1: OVERVIEW ════════════════════════════ -->
   <div id="section-overview" class="section active">

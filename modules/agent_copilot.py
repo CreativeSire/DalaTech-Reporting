@@ -1419,6 +1419,31 @@ def execute_admin_tool(ds, tool_name: str, arguments=None, context=None,
                     data={'job': ds.get_assistant_job(schedule_id), 'connector_result': connector_run},
                     state=connector_run.get('state'),
                 )
+            elif job.get('job_type') == 'coach_refresh':
+                from .coach_operations import backfill_recent_periods, run_coach_refresh
+
+                payload = job.get('payload') or {}
+                mode = str(payload.get('mode') or 'current').strip().lower()
+                if mode == 'backfill_recent':
+                    coach_result = backfill_recent_periods(
+                        ds,
+                        monthly_count=int(payload.get('monthly_count') or 6),
+                        weekly_count=int(payload.get('weekly_count') or 4),
+                        include_pairs=bool(payload.get('include_pairs', True)),
+                    )
+                else:
+                    coach_result = run_coach_refresh(
+                        ds,
+                        report_id=payload.get('report_id') or ((report or {}).get('id')),
+                        month_value=payload.get('month'),
+                        include_pairs=bool(payload.get('include_pairs', True)),
+                        persist=True,
+                    )
+                ds.record_assistant_job_run(schedule_id, result=coach_result)
+                result = _tool_response(
+                    message='Coach refresh completed.',
+                    data={'job': ds.get_assistant_job(schedule_id), 'coach_refresh': coach_result},
+                )
             else:
                 ds.record_assistant_job_run(schedule_id, result={'manual_run': True})
                 result = _tool_response(message='Schedule marked as run.', data={'job': ds.get_assistant_job(schedule_id)})

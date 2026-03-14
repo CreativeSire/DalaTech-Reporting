@@ -10,11 +10,34 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
+from urllib.parse import quote
 
 from .narrative_ai import gemini_available, _get_client
 
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+DEFAULT_SIGNAL_THRESHOLDS = {
+    "revenue_declining_pct": -12.0,
+    "revenue_declining_high_pct": -20.0,
+    "revenue_accelerating_pct": 15.0,
+    "repeat_rate_declining_points": -8.0,
+    "repeat_rate_declining_high_points": -15.0,
+    "retailer_issue_visit_min": 3,
+    "retailer_issue_density_high": 0.4,
+    "retailer_underpenetrated_brand_count": 3,
+    "low_visit_high_potential_transactions_max": 1,
+    "forecast_confidence_score_min": 55.0,
+    "retailer_concentration_share_pct": 35.0,
+}
+
+
+def get_signal_thresholds(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    thresholds = dict(DEFAULT_SIGNAL_THRESHOLDS)
+    if overrides:
+        for key, value in overrides.items():
+            if key in thresholds and value is not None:
+                thresholds[key] = value
+    return thresholds
 
 
 def _signal(scope_type: str, scope_key: str, period_type: str, period_start: str,
@@ -40,7 +63,8 @@ def _signal(scope_type: str, scope_key: str, period_type: str, period_start: str
     }
 
 
-def derive_snapshot_signals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+def derive_snapshot_signals(snapshot: dict[str, Any], thresholds: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    thresholds = get_signal_thresholds(thresholds)
     scope_type = snapshot.get("scope_type") or "portfolio"
     scope_key = snapshot.get("scope_key") or "global"
     period_type = snapshot.get("period_type") or "monthly"
@@ -52,13 +76,13 @@ def derive_snapshot_signals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
 
     revenue_mom = comparisons.get("revenue_mom")
-    if revenue_mom is not None and revenue_mom <= -12:
+    if revenue_mom is not None and revenue_mom <= thresholds["revenue_declining_pct"]:
         signals.append(_signal(
             scope_type, scope_key, period_type, period_start, period_end,
             "revenue_declining",
             "Revenue is deteriorating",
             f"Revenue is down {abs(float(revenue_mom)):.1f}% versus the comparable prior period.",
-            severity="high" if revenue_mom <= -20 else "medium",
+            severity="high" if revenue_mom <= thresholds["revenue_declining_high_pct"] else "medium",
             confidence=0.82,
             metrics={"revenue_mom": revenue_mom, "revenue": metrics.get("revenue")},
             recommended_actions=[
@@ -66,7 +90,7 @@ def derive_snapshot_signals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                 "Check whether field activity or stock gaps explain the drop.",
             ],
         ))
-    elif revenue_mom is not None and revenue_mom >= 15:
+    elif revenue_mom is not None and revenue_mom >= thresholds["revenue_accelerating_pct"]:
         signals.append(_signal(
             scope_type, scope_key, period_type, period_start, period_end,
             "revenue_accelerating",
@@ -82,13 +106,13 @@ def derive_snapshot_signals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         ))
 
     repeat_rate_delta = comparisons.get("repeat_rate_delta")
-    if repeat_rate_delta is not None and repeat_rate_delta <= -8:
+    if repeat_rate_delta is not None and repeat_rate_delta <= thresholds["repeat_rate_declining_points"]:
         signals.append(_signal(
             scope_type, scope_key, period_type, period_start, period_end,
             "repeat_rate_declining",
             "Repeat behavior is weakening",
             f"Repeat rate fell by {abs(float(repeat_rate_delta)):.1f} points to {float(metrics.get('repeat_rate') or 0):.1f}%.",
-            severity="high" if repeat_rate_delta <= -15 else "medium",
+            severity="high" if repeat_rate_delta <= thresholds["repeat_rate_declining_high_points"] else "medium",
             confidence=0.8,
             metrics={"repeat_rate": metrics.get("repeat_rate"), "repeat_rate_delta": repeat_rate_delta},
             recommended_actions=[
@@ -101,7 +125,7 @@ def derive_snapshot_signals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         issue_total = int((activity.get("totals") or {}).get("issues") or 0)
         visit_total = int((activity.get("totals") or {}).get("visits") or 0)
         issue_density = round(issue_total / max(visit_total, 1), 2) if visit_total else 0.0
-        if visit_total >= 3 and issue_density >= 0.4:
+        if visit_total >= thresholds["retailer_issue_visit_min"] and issue_density >= thresholds["retailer_issue_density_high"]:
             signals.append(_signal(
                 scope_type, scope_key, period_type, period_start, period_end,
                 "high_issue_density",
@@ -117,7 +141,7 @@ def derive_snapshot_signals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
             ))
 
         opportunity_brands = snapshot.get("opportunity_brands") or []
-        if len(opportunity_brands) >= 3:
+        if len(opportunity_brands) >= thresholds["retailer_underpenetrated_brand_count"]:
             signals.append(_signal(
                 scope_type, scope_key, period_type, period_start, period_end,
                 "retailer_underpenetrated",
@@ -132,7 +156,7 @@ def derive_snapshot_signals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
                 ],
             ))
 
-        if int(metrics.get("transactions") or 0) <= 1 and float(metrics.get("revenue") or 0) > 0:
+        if int(metrics.get("transactions") or 0) <= thresholds["low_visit_high_potential_transactions_max"] and float(metrics.get("revenue") or 0) > 0:
             signals.append(_signal(
                 scope_type, scope_key, period_type, period_start, period_end,
                 "low_visit_high_potential",
@@ -151,7 +175,7 @@ def derive_snapshot_signals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         forecast = snapshot.get("forecast") or {}
         confidence_band = str(forecast.get("confidence_band") or "").lower()
         confidence_score = float(forecast.get("confidence_score") or 0)
-        if confidence_band in {"weak", "low"} or confidence_score and confidence_score < 55:
+        if confidence_band in {"weak", "low"} or confidence_score and confidence_score < thresholds["forecast_confidence_score_min"]:
             signals.append(_signal(
                 scope_type, scope_key, period_type, period_start, period_end,
                 "forecast_low_confidence",
@@ -169,7 +193,7 @@ def derive_snapshot_signals(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         retailer_rows = snapshot.get("retailer_rows") or []
         if retailer_rows:
             top_share = float(retailer_rows[0].get("share_pct") or 0)
-            if top_share >= 35:
+            if top_share >= thresholds["retailer_concentration_share_pct"]:
                 signals.append(_signal(
                     scope_type, scope_key, period_type, period_start, period_end,
                     "retailer_concentration",
@@ -213,6 +237,147 @@ def persist_snapshot_signals(ds, snapshot: dict[str, Any], signals: list[dict[st
         if saved_signal:
             saved.append(saved_signal)
     return saved
+
+
+def _slug(value: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", "_", str(value or "").lower()).strip("_")
+    return text or "recommendation"
+
+
+def _dedupe_action_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = set()
+    deduped = []
+    for item in items:
+        key = (item.get("kind"), item.get("url"), item.get("api_path"), item.get("recommendation_key"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _score_lookup(ds, snapshot: dict[str, Any]) -> dict[str, Any]:
+    return ds.get_recommendation_outcome_scores(
+        brand_name=snapshot.get("scope_key") if snapshot.get("scope_type") == "brand" else None,
+        scope_type=snapshot.get("scope_type"),
+        scope_key=snapshot.get("scope_key"),
+    )
+
+
+def build_recommendation_items(ds, snapshot: dict[str, Any], signals: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    scores = _score_lookup(ds, snapshot)
+    items = []
+    for signal in signals:
+        for action in signal.get("recommended_actions") or []:
+            recommendation_key = f"{signal.get('signal_type')}::{_slug(action)}"
+            score = scores.get(recommendation_key, {})
+            items.append({
+                "recommendation_key": recommendation_key,
+                "label": action,
+                "signal_type": signal.get("signal_type"),
+                "severity": signal.get("severity"),
+                "weighted_score": float(score.get("weighted_score") or 0),
+                "total_events": int(score.get("total_events") or 0),
+            })
+    items.sort(
+        key=lambda item: (
+            -float(item.get("weighted_score") or 0),
+            SEVERITY_ORDER.get(item.get("severity") or "low", 9),
+            item.get("label") or "",
+        )
+    )
+    deduped = []
+    seen = set()
+    for item in items:
+        if item["recommendation_key"] in seen:
+            continue
+        seen.add(item["recommendation_key"])
+        deduped.append(item)
+    return deduped
+
+
+def build_action_items(ds, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    scope_type = snapshot.get("scope_type") or "portfolio"
+    scope_key = snapshot.get("scope_key") or "global"
+    report_id = snapshot.get("report_id")
+    period_label = snapshot.get("period_label")
+    scores = _score_lookup(ds, snapshot)
+
+    def _action(kind: str, label: str, recommendation_key: str, url: str | None = None,
+                api_path: str | None = None, method: str = "GET",
+                payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        score = scores.get(recommendation_key, {})
+        return {
+            "kind": kind,
+            "label": label,
+            "recommendation_key": recommendation_key,
+            "url": url,
+            "api_path": api_path,
+            "method": method,
+            "payload": payload or {},
+            "weighted_score": float(score.get("weighted_score") or 0),
+            "total_events": int(score.get("total_events") or 0),
+        }
+
+    items: list[dict[str, Any]] = []
+    if scope_type == "brand":
+        encoded_scope = quote(str(scope_key), safe="")
+        items.extend([
+            _action("open", "Open Brand", "open_brand_overview", url=f"/brand/{encoded_scope}"),
+            _action("open", "Open Trends", "open_brand_trends", url=f"/trends?scope=brand&brand={encoded_scope}"),
+            _action("open", "Open Forecast", "open_brand_forecast", url=f"/brand/{encoded_scope}?focus=forecast"),
+            _action("report", "Generate Report", "generate_brand_report", url=f"/api/report_html/{report_id}/{encoded_scope}" if report_id else None),
+        ])
+    elif scope_type == "retailer":
+        encoded_scope = quote(str(scope_key), safe="")
+        items.extend([
+            _action("open", "Open Retailer", "open_retailer_detail", url=f"/retailer/{encoded_scope}" + (f"?report_id={report_id}" if report_id else "")),
+            _action("report", "Generate Report", "generate_retailer_report", url=f"/api/retailers/{encoded_scope}/report_html" + (f"?report_id={report_id}" if report_id else "")),
+            _action("open", "Open Activity", "open_retailer_activity", url=f"/api/activity/store/{encoded_scope}"),
+        ])
+    else:
+        items.extend([
+            _action("open", "Open Forecasting", "open_portfolio_forecasting", url="/forecasting"),
+            _action("open", "Open Trends", "open_portfolio_trends", url="/trends"),
+            _action("open", "Open Copilot", "open_copilot", url="/copilot"),
+        ])
+
+    items.extend([
+        _action(
+            "schedule",
+            "Schedule Nightly Refresh",
+            "schedule_coach_refresh",
+            api_path="/api/copilot/schedules",
+            method="POST",
+            payload={
+                "label": f"{scope_type.title()} Coach Refresh",
+                "job_type": "coach_refresh",
+                "target": scope_key,
+                "cadence": "nightly",
+                "payload": {
+                    "scope_type": scope_type,
+                    "scope_key": scope_key,
+                    "report_id": report_id,
+                    "period_label": period_label,
+                },
+            },
+        ),
+        _action(
+            "pin",
+            "Pin Summary",
+            "pin_coach_summary",
+            api_path="/api/coach/pin",
+            method="POST",
+            payload={
+                "scope_type": scope_type,
+                "scope_key": scope_key,
+                "report_id": report_id,
+            },
+        ),
+    ])
+    items = _dedupe_action_items(items)
+    items.sort(key=lambda item: (-float(item.get("weighted_score") or 0), item.get("label") or ""))
+    return items
 
 
 def _strip_code_fence(text: str) -> str:
@@ -287,7 +452,14 @@ def build_coach_payload(ds, snapshot: dict[str, Any], persist: bool = True,
     signals = derive_snapshot_signals(snapshot)
     saved_signals = persist_snapshot_signals(ds, snapshot, signals) if persist else signals
     summary = summarize_snapshot(snapshot, saved_signals if persist else signals, use_gemini=use_gemini)
+    recommendation_items = build_recommendation_items(ds, snapshot, saved_signals if persist else signals)
+    if recommendation_items:
+        summary["recommended_actions"] = [item["label"] for item in recommendation_items[:4]]
+    action_items = build_action_items(ds, snapshot)
     return {
         "summary": summary,
         "signals": saved_signals if persist else signals,
+        "recommendation_items": recommendation_items,
+        "action_items": action_items,
+        "thresholds": get_signal_thresholds(),
     }

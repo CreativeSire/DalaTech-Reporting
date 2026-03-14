@@ -444,7 +444,8 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
                            ai_narrative: str = None,
                            sheets_url: str = None,
                            growth_outlook: dict | None = None,
-                           gmv_window: dict | None = None) -> str:
+                           gmv_window: dict | None = None,
+                           coach: dict | None = None) -> str:
     """Render the print-oriented report HTML used for PDF export."""
     # ── Charts (matplotlib → base64) ──────────────────────────────────────────
     # Use _for_print=True so charts are generated at print-optimised sizes
@@ -621,6 +622,7 @@ def render_pdf_report_html(brand_name: str, kpis: dict,
         growth_outlook=growth_outlook,
         gmv_window=gmv_window,
         gmv_chart_svg=gmv_chart_svg,
+        coach=coach or {},
     )
 
 
@@ -886,7 +888,8 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
                       ai_narrative: str = None,
                       sheets_url: str = None,
                       growth_outlook: dict | None = None,
-                      gmv_window: dict | None = None) -> str:
+                      gmv_window: dict | None = None,
+                      coach: dict | None = None) -> str:
     """
     Generate a 2-page PDF using HTML template + Playwright.
 
@@ -916,6 +919,7 @@ def generate_pdf_html(output_path: str, brand_name: str, kpis: dict,
         sheets_url=sheets_url,
         growth_outlook=growth_outlook,
         gmv_window=gmv_window,
+        coach=coach,
     )
 
     # ── Render to PDF via Playwright ───────────────────────────────────────────
