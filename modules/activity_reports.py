@@ -661,25 +661,49 @@ def _build_recommendations(current, issue_mix, opportunity_mix, store_breakdown,
     do_now, watch, strategic = [], [], []
 
     if issue_mix:
-        what_stands_out.append(f"{issue_mix[0]['label']} is the lead issue signal with {issue_mix[0]['count']} mentions.")
-        risks.append(f"{issue_mix[0]['label']} is still recurring across the field network.")
-        do_now.append({
-            'action': f"Resolve {issue_mix[0]['label'].lower()} hotspots immediately.",
-            'why': f"It was the most frequent issue recorded this period ({issue_mix[0]['count']} mentions).",
-            'affected': ', '.join(row['retailer_name'] for row in store_breakdown['rows'][:3]),
-            'impact': 'Reduces preventable friction before the next sales cycle.',
-            'urgency': 'High',
-        })
+        top_issue = issue_mix[0]
+        issue_count = int(top_issue.get('count') or 0)
+        stores_visited = int(current.get('stores_visited') or 0)
+        activities_logged = int(current.get('activities_logged') or 0)
+        share = (issue_count / activities_logged) if activities_logged else 0
+        significant = (issue_count >= 5 and stores_visited >= 2) or share >= 0.20
+
+        what_stands_out.append(f"{top_issue['label']} is the lead issue signal with {issue_count} mentions.")
+        if significant:
+            risks.append(f"{top_issue['label']} is still recurring across the field network.")
+            do_now.append({
+                'action': f"Resolve {top_issue['label'].lower()} hotspots immediately.",
+                'why': f"It was the most frequent issue recorded this period ({issue_count} mentions).",
+                'affected': ', '.join(row['retailer_name'] for row in store_breakdown['rows'][:3]),
+                'impact': 'Reduces preventable friction before the next sales cycle.',
+                'urgency': 'High',
+            })
+        else:
+            watch.append({
+                'action': f"Monitor {top_issue['label'].lower()} mentions in upcoming visits.",
+                'why': f"Only {issue_count} mention(s) across {stores_visited} store(s) this period — not yet a hotspot.",
+                'affected': ', '.join(row['retailer_name'] for row in store_breakdown['rows'][:3]),
+                'impact': 'Confirms whether the signal grows before treating it as urgent.',
+                'urgency': 'Low',
+            })
     if opportunity_mix:
-        what_stands_out.append(f"{opportunity_mix[0]['label']} is the strongest opportunity signal right now.")
-        opportunities.append(f"Field teams repeatedly flagged {opportunity_mix[0]['label']} as an upside pocket.")
-        strategic.append({
-            'action': f"Convert the strongest {opportunity_mix[0]['label']} opportunities into commercial asks.",
-            'why': 'The same opportunity pattern is repeating across multiple store visits.',
-            'affected': ', '.join(row['retailer_name'] for row in store_breakdown['rows'][:5]),
-            'impact': 'Improves conversion from activity into distribution or reorder growth.',
-            'urgency': 'Medium',
-        })
+        top_opp = opportunity_mix[0]
+        opp_count = int(top_opp.get('count') or 0)
+        stores_visited = int(current.get('stores_visited') or 0)
+        activities_logged = int(current.get('activities_logged') or 0)
+        opp_share = (opp_count / activities_logged) if activities_logged else 0
+        opp_significant = (opp_count >= 5 and stores_visited >= 2) or opp_share >= 0.20
+
+        what_stands_out.append(f"{top_opp['label']} is the strongest opportunity signal right now.")
+        if opp_significant:
+            opportunities.append(f"Field teams repeatedly flagged {top_opp['label']} as an upside pocket.")
+            strategic.append({
+                'action': f"Convert the strongest {top_opp['label']} opportunities into commercial asks.",
+                'why': 'The same opportunity pattern is repeating across multiple store visits.',
+                'affected': ', '.join(row['retailer_name'] for row in store_breakdown['rows'][:5]),
+                'impact': 'Improves conversion from activity into distribution or reorder growth.',
+                'urgency': 'Medium',
+            })
 
     if store_breakdown['rows']:
         top_issue_store = sorted(store_breakdown['rows'], key=lambda row: row.get('issues', 0), reverse=True)[0]
