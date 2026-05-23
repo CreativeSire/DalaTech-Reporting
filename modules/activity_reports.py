@@ -8,6 +8,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from .brand_names import brand_match_terms
+from .narrative_ai import generate_activity_narrative
 from .period_comparison import build_period_comparison, comparison_basis_label, compare_same_type_reports
 from .pdf_generator_html import render_pdf_bytes
 
@@ -207,7 +208,7 @@ def _read_activity_frames(ds, brand_name, report_id=None, batch_id=None):
             SELECT ae.activity_date, ae.salesman_name, ae.salesman_code, ae.salesman_designation,
                    ae.reporting_person_name, ae.survey_name, ae.retailer_code, ae.retailer_name,
                    ae.retailer_type, ae.retailer_state, ae.retailer_district, ae.retailer_city,
-                   ae.question, ae.label, ae.answer
+                   ae.question, ae.label, ae.answer, ae.answer_type
             FROM activity_events ae
             WHERE ae.{scope_col} = ? AND ({survey_events})
             ORDER BY ae.activity_date DESC, ae.id DESC
@@ -254,6 +255,24 @@ def _read_activity_frames(ds, brand_name, report_id=None, batch_id=None):
     return events_df, visits_df, issues_df, mentions_df
 
 
+_IMAGE_URL_RE = None
+
+
+def _count_images_captured(events_df, visits_df):
+    import re
+    global _IMAGE_URL_RE
+    if _IMAGE_URL_RE is None:
+        _IMAGE_URL_RE = re.compile(r'https?://\S+', re.IGNORECASE)
+    if events_df is not None and not events_df.empty and 'answer_type' in events_df.columns:
+        mask = events_df['answer_type'].fillna('').str.lower().eq('image')
+        urls = events_df.loc[mask, 'answer'].fillna('').astype(str).str.strip()
+        urls = urls[urls.str.match(_IMAGE_URL_RE)]
+        return int(urls.nunique())
+    if visits_df is not None and not visits_df.empty:
+        return int(_safe_int(visits_df['photo_count'].sum()))
+    return 0
+
+
 def _compute_current_metrics(events_df, visits_df, issues_df, mentions_df):
     non_opportunity_issues = issues_df[issues_df['issue_type'].fillna('').str.lower() != 'opportunity'].copy()
     opportunities_df = issues_df[issues_df['issue_type'].fillna('').str.lower() == 'opportunity'].copy()
@@ -263,7 +282,7 @@ def _compute_current_metrics(events_df, visits_df, issues_df, mentions_df):
         'distinct_salesmen': int(events_df['salesman_name'].fillna('').replace('', pd.NA).dropna().nunique()) if not events_df.empty else 0,
         'issues_found': int(len(non_opportunity_issues)),
         'opportunities_found': int(max(len(opportunities_df), _safe_int(visits_df['opportunity_count'].sum()) if not visits_df.empty else 0)),
-        'images_captured': int(_safe_int(visits_df['photo_count'].sum()) if not visits_df.empty else 0),
+        'images_captured': _count_images_captured(events_df, visits_df),
         'states_covered': int(events_df['retailer_state'].fillna('').replace('', pd.NA).dropna().nunique()) if not events_df.empty else 0,
         'cities_covered': int(events_df['retailer_city'].fillna('').replace('', pd.NA).dropna().nunique()) if not events_df.empty else 0,
         'survey_rows': int(len(events_df)),
@@ -342,7 +361,6 @@ def _build_kpi_cards(current, previous_metrics, trailing_metrics, source_quality
     previous = previous_metrics['current'] if previous_metrics else {}
     cards = [
         ('Stores Visited', current['stores_visited'], 'stores', 'stores_visited'),
-        ('Activities Logged', current['activities_logged'], 'survey rows', 'activities_logged'),
         ('Issues Found', current['issues_found'], 'logged issues', 'issues_found'),
         ('Opportunities Found', current['opportunities_found'], 'logged opportunities', 'opportunities_found'),
         ('Images Captured', current['images_captured'], 'photos', 'images_captured'),
@@ -622,6 +640,138 @@ def _build_details(events_df):
     }
 
 
+def _collect_qualitative_samples(non_opportunity_issues, opportunity_issues, events_df, limit=15):
+    def _samples(df, answer_col='answer', label_cols=('label', 'question')):
+        if df is None or df.empty:
+            return []
+        rows = []
+        seen = set()
+        for _, row in df.iterrows():
+            ans = str(row.get(answer_col) or '').strip()
+            if not ans or ans.lower() in {'yes', 'no', 'n/a', 'none'} or ans.startswith('http'):
+                continue
+            if len(ans) < 8:
+                continue
+            key = ans.lower()[:120]
+            if key in seen:
+                continue
+            seen.add(key)
+            label_parts = []
+            for col in label_cols:
+                val = row.get(col)
+                if val and str(val).strip():
+                    label_parts.append(str(val).strip())
+                    break
+            store = str(row.get('retailer_name') or '').strip()
+            sku = str(row.get('sku_name') or '').strip() if 'sku_name' in df.columns else ''
+            ctx = []
+            if store: ctx.append(store)
+            if sku: ctx.append(sku)
+            if label_parts: ctx.append(label_parts[0])
+            rows.append({'note': ans[:280], 'context': ' | '.join(ctx)[:160]})
+            if len(rows) >= limit:
+                break
+        return rows
+    return {
+        'issue_notes': _samples(non_opportunity_issues),
+        'opportunity_notes': _samples(opportunity_issues),
+        'event_notes': _samples(events_df) if events_df is not None else [],
+    }
+
+
+def _build_narrative_payload(brand_name, period_label, date_range, current, issue_mix,
+                              opportunity_mix, store_breakdown, geography, sales_row,
+                              previous_metrics, trailing_avg, quality_label,
+                              non_opportunity_issues, opportunity_issues, events_df):
+    samples = _collect_qualitative_samples(non_opportunity_issues, opportunity_issues, events_df)
+    top_stores = [
+        {
+            'name': r.get('retailer_name'),
+            'city': r.get('retailer_city'),
+            'state': r.get('retailer_state'),
+            'visits': int(r.get('visits') or 0),
+            'issues': int(r.get('issues') or 0),
+            'opportunities': int(r.get('opportunities') or 0),
+        }
+        for r in (store_breakdown.get('rows') or [])[:12]
+    ]
+    prev_current = previous_metrics['current'] if previous_metrics else {}
+    return {
+        'brand_name': brand_name,
+        'period_label': period_label,
+        'date_range': date_range,
+        'data_quality': quality_label,
+        'metrics': {
+            'stores_visited': current.get('stores_visited'),
+            'activities_logged': current.get('activities_logged'),
+            'issues_found': current.get('issues_found'),
+            'opportunities_found': current.get('opportunities_found'),
+            'images_captured': current.get('images_captured'),
+            'states_covered': current.get('states_covered'),
+            'cities_covered': current.get('cities_covered'),
+            'brand_mentions': current.get('brand_mentions'),
+        },
+        'change_vs_previous': {
+            'activities_pct': _calc_pct_change(current.get('activities_logged'), prev_current.get('activities_logged')),
+            'issues_pct': _calc_pct_change(current.get('issues_found'), prev_current.get('issues_found')),
+            'stores_pct': _calc_pct_change(current.get('stores_visited'), prev_current.get('stores_visited')),
+        },
+        'issue_mix': issue_mix[:10],
+        'opportunity_mix': opportunity_mix[:10],
+        'top_stores': top_stores,
+        'geography': {
+            'top_state': geography.get('top_state'),
+            'top_city': geography.get('top_city'),
+            'cities': [c.get('city') for c in (geography.get('cities') or [])[:10] if c.get('city')],
+        },
+        'commercial': {
+            'revenue_ngn': _safe_float(sales_row.get('total_revenue')) if sales_row else None,
+            'selling_stores': _safe_int(sales_row.get('num_stores')) if sales_row else None,
+            'repeat_pct': _safe_float(sales_row.get('repeat_pct')) if sales_row else None,
+        } if sales_row else None,
+        'qualitative_samples': samples,
+    }
+
+
+def _compose_action_list(items, urgency, default_affected=''):
+    out = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        action = str(item.get('action') or '').strip()
+        why = str(item.get('why') or '').strip()
+        if not action:
+            continue
+        out.append({
+            'action': action,
+            'why': why,
+            'affected': default_affected,
+            'impact': '',
+            'urgency': urgency,
+        })
+    return out
+
+
+def _apply_narrative(narrative, store_breakdown):
+    affected = ', '.join(row['retailer_name'] for row in (store_breakdown.get('rows') or [])[:3])
+    bullets = [str(b).strip() for b in (narrative.get('bullets') or []) if str(b).strip()][:5]
+    executive_summary = {
+        'paragraph': str(narrative.get('paragraph') or '').strip(),
+        'bullets': bullets,
+    }
+    recommendations = {
+        'what_stands_out': [str(x).strip() for x in (narrative.get('what_stands_out') or []) if str(x).strip()][:4],
+        'risks': [str(x).strip() for x in (narrative.get('risks') or []) if str(x).strip()][:4],
+        'opportunities': [str(x).strip() for x in (narrative.get('opportunities') or []) if str(x).strip()][:4],
+        'actions': {
+            'do_now': _compose_action_list(narrative.get('do_now'), 'High', affected)[:3],
+            'watch': _compose_action_list(narrative.get('watch'), 'Medium', affected)[:3],
+            'strategic': _compose_action_list(narrative.get('strategic'), 'Medium', affected)[:3],
+        },
+    }
+    return executive_summary, recommendations
+
+
 def _build_executive_summary(brand_name, current, issue_mix, opportunity_mix, geography, sales_row, previous_metrics, trailing_avg, quality_label):
     summary_lines = [
         f"{brand_name} logged {current['activities_logged']:,} field activities across {current['stores_visited']} retailers in {current['states_covered']} states and {current['cities_covered']} cities during the period."
@@ -802,8 +952,18 @@ def prepare_activity_report_data(ds, brand_name: str, report_id: int = None, bat
     field_team = _build_field_team(events_df, visits_df, quality_label)
     details = _build_details(events_df)
     sales_row = ds.get_brand_kpis_single(report_id, brand_name) if report_id else None
-    executive_summary = _build_executive_summary(brand_name, current, issue_mix, opportunity_mix, geography, sales_row, previous_metrics, trailing_avg, quality_label)
-    recommendations = _build_recommendations(current, issue_mix, opportunity_mix, store_breakdown, quality_label, sales_row)
+    narrative_payload = _build_narrative_payload(
+        brand_name, context_label, _compact_date_label(context_start, context_end),
+        current, issue_mix, opportunity_mix, store_breakdown, geography, sales_row,
+        previous_metrics, trailing_avg, quality_label,
+        non_opportunity_issues, opportunity_issues, events_df,
+    )
+    narrative = generate_activity_narrative(narrative_payload)
+    if narrative:
+        executive_summary, recommendations = _apply_narrative(narrative, store_breakdown)
+    else:
+        executive_summary = _build_executive_summary(brand_name, current, issue_mix, opportunity_mix, geography, sales_row, previous_metrics, trailing_avg, quality_label)
+        recommendations = _build_recommendations(current, issue_mix, opportunity_mix, store_breakdown, quality_label, sales_row)
 
     previous_current = previous_metrics['current'] if previous_metrics else {}
     yoy_current = yoy_metrics['current'] if yoy_metrics else {}

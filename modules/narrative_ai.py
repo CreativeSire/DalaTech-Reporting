@@ -317,6 +317,80 @@ def _build_fallback_recommendations(brand_name: str, kpis: dict, churn_data: lis
     return "\n".join(actions[:3])
 
 
+def _strip_code_fence(text: str) -> str:
+    s = (text or '').strip()
+    if s.startswith('```'):
+        s = s.split('\n', 1)[1] if '\n' in s else s[3:]
+        if s.endswith('```'):
+            s = s[:-3]
+    return s.strip()
+
+
+def _build_activity_narrative_prompt(payload: dict) -> str:
+    brand = payload.get('brand_name') or 'the brand'
+    period = payload.get('period_label') or 'the current period'
+    return f"""You are a senior field-operations analyst writing a weekly Field Activity report for {brand} ({period}).
+
+Use ONLY the structured evidence below. Reference real store names, SKUs, cities, and counts from the evidence. Do not invent numbers, stores, or SKUs. If evidence is thin, say so plainly.
+
+Tone: confident, specific, analytical. Write like a human analyst — never mention AI, models, prompts, automation, or data sources. No filler phrases ("it is worth noting", "in conclusion"). No emojis.
+
+Return a single JSON object with EXACTLY these keys and shapes (no markdown, no prose around it):
+
+{{
+  "paragraph": "A single 2-3 sentence executive paragraph leading the report.",
+  "bullets": ["3 short executive-summary bullets, specific and quantified"],
+  "what_stands_out": ["3 specific observations grounded in the data"],
+  "risks": ["3 concrete risks/concerns — name SKUs, stores, or expiry/OOS specifics where present"],
+  "opportunities": ["3 concrete upside signals — name SKUs, stores, or themes"],
+  "do_now": [
+    {{"action": "Imperative sentence — what to do now", "why": "One-sentence rationale grounded in the evidence"}},
+    {{"action": "...", "why": "..."}},
+    {{"action": "...", "why": "..."}}
+  ],
+  "watch": [
+    {{"action": "Imperative sentence — what to monitor", "why": "One-sentence rationale"}},
+    {{"action": "...", "why": "..."}}
+  ],
+  "strategic": [
+    {{"action": "Imperative sentence — strategic move", "why": "One-sentence rationale"}},
+    {{"action": "...", "why": "..."}}
+  ]
+}}
+
+Rules:
+- Every list MUST have the exact item count shown above. If evidence is thin, repurpose adjacent insights rather than padding with vague filler.
+- "do_now" items must be high-urgency and grounded in actual issues/expiry/OOS observed.
+- "watch" items are medium-urgency monitoring items.
+- "strategic" items are longer-horizon plays (distribution, assortment, pricing).
+- Quote specific SKU names, store names, and cities from the evidence when relevant.
+- No mention of "AI", "Gemini", "generated", "system", "this report", or the prompt itself.
+
+EVIDENCE:
+{json.dumps(payload, default=str, ensure_ascii=False)}
+
+Return ONLY the JSON object."""
+
+
+def generate_activity_narrative(payload: dict) -> dict | None:
+    if not gemini_available():
+        return None
+    try:
+        prompt = _build_activity_narrative_prompt(payload)
+        text, _ = _generate_text(prompt, f"Activity narrative for {payload.get('brand_name', '?')}")
+        data = json.loads(_strip_code_fence(text))
+        required_lists = ('bullets', 'what_stands_out', 'risks', 'opportunities', 'do_now', 'watch', 'strategic')
+        if not isinstance(data.get('paragraph'), str) or not data['paragraph'].strip():
+            return None
+        for key in required_lists:
+            if not isinstance(data.get(key), list) or not data[key]:
+                return None
+        return data
+    except Exception as exc:
+        logger.warning("Activity narrative generation failed for %s: %s", payload.get('brand_name'), exc)
+        return None
+
+
 def generate_recommendations(brand_name: str, kpis: dict, churn_data: list = None, portfolio_avg: float = None):
     """
     Generate 3 concrete action-oriented recommendations for a brand using Gemini.
