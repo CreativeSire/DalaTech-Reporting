@@ -4189,7 +4189,7 @@ def api_retailer_group_report_pdf(group_slug):
 # Bump this whenever the activity report output format changes (template, builder,
 # narrative pipeline). It is appended to the cache filename so stale files from
 # prior versions are simply never read, and fresh ones get built on next request.
-ACTIVITY_REPORT_CACHE_VERSION = 'v2'
+ACTIVITY_REPORT_CACHE_VERSION = 'v3'
 
 
 def _activity_report_file_stem(brand_name, period_label):

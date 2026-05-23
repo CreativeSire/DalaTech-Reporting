@@ -252,6 +252,18 @@ def _read_activity_frames(ds, brand_name, report_id=None, batch_id=None):
     for df in (events_df, visits_df, issues_df, mentions_df):
         if 'activity_date' in df.columns:
             df['activity_date'] = pd.to_datetime(df['activity_date'], errors='coerce')
+
+    # Mask historical phantom issues from before the _issue_type fix:
+    # rows where the underlying answer was a negative ("no"/"none"/"n/a") but
+    # got bucketed into expiry_issue / packaging_issue / etc. because the label
+    # contained the topical keyword.
+    if not issues_df.empty and 'answer' in issues_df.columns:
+        negatives = {
+            'no', 'none', 'n/a', 'na', 'nil', 'nothing', 'no concerns',
+            'no concern', 'no issue', 'no issues', 'false', '0', 'not applicable',
+        }
+        answer_norm = issues_df['answer'].fillna('').astype(str).str.strip().str.lower()
+        issues_df = issues_df[~answer_norm.isin(negatives)].reset_index(drop=True)
     return events_df, visits_df, issues_df, mentions_df
 
 
@@ -259,15 +271,24 @@ _IMAGE_URL_RE = None
 
 
 def _count_images_captured(events_df, visits_df):
+    """Distinct stores that submitted at least one photo URL in the period.
+
+    Each survey has multiple image-typed prompts (Shelf, Competitor, Packaging),
+    so summing raw photo rows or counting distinct URLs inflates the KPI
+    relative to what users actually expect (coverage, not file count).
+    """
     import re
     global _IMAGE_URL_RE
     if _IMAGE_URL_RE is None:
         _IMAGE_URL_RE = re.compile(r'https?://\S+', re.IGNORECASE)
     if events_df is not None and not events_df.empty and 'answer_type' in events_df.columns:
         mask = events_df['answer_type'].fillna('').str.lower().eq('image')
-        urls = events_df.loc[mask, 'answer'].fillna('').astype(str).str.strip()
-        urls = urls[urls.str.match(_IMAGE_URL_RE)]
-        return int(urls.nunique())
+        sub = events_df.loc[mask, ['retailer_name', 'answer']].copy()
+        sub['answer'] = sub['answer'].fillna('').astype(str).str.strip()
+        sub = sub[sub['answer'].str.match(_IMAGE_URL_RE)]
+        if sub.empty:
+            return 0
+        return int(sub['retailer_name'].fillna('').replace('', pd.NA).dropna().nunique())
     if visits_df is not None and not visits_df.empty:
         return int(_safe_int(visits_df['photo_count'].sum()))
     return 0
@@ -363,7 +384,7 @@ def _build_kpi_cards(current, previous_metrics, trailing_metrics, source_quality
         ('Stores Visited', current['stores_visited'], 'stores', 'stores_visited'),
         ('Issues Found', current['issues_found'], 'logged issues', 'issues_found'),
         ('Opportunities Found', current['opportunities_found'], 'logged opportunities', 'opportunities_found'),
-        ('Images Captured', current['images_captured'], 'photos', 'images_captured'),
+        ('Stores Photographed', current['images_captured'], 'stores with photo evidence', 'images_captured'),
         ('Cities Covered', current['cities_covered'], 'cities', 'cities_covered'),
     ]
     result = []

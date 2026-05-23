@@ -656,16 +656,50 @@ def _extract_sku_mentions(text: str, sku_lookup: dict[int, list[tuple[str, str]]
     return matches
 
 
+_NEGATIVE_ANSWERS = {
+    'no', 'none', 'n/a', 'na', 'nil', 'nothing', 'no concerns',
+    'no concern', 'no issue', 'no issues', 'false', '0', 'not applicable',
+}
+
+
 def _issue_type(question: str, label: str, answer: str, answer_type: str) -> tuple[str | None, str]:
-    blob = ' '.join(str(v or '') for v in (question, label, answer)).lower()
-    if answer_type and answer_type.lower() == 'image' and not str(answer or '').strip():
+    answer_str = str(answer or '').strip()
+    answer_low = answer_str.lower()
+    label_str = str(label or '').lower()
+    question_str = str(question or '').lower()
+
+    if answer_type and answer_type.lower() == 'image' and not answer_str:
         return None, 'medium'
-    if not str(answer or '').strip() and answer_type.lower() != 'image':
+    if not answer_str and answer_type.lower() != 'image':
         return None, 'medium'
+
+    # A negative answer to a topical Yes/No question is NOT an issue, even when
+    # the label contains the topical keyword. Without this, every
+    # "Close to Expiry Concerns? = no" row was counted as an expiry issue.
+    if answer_low in _NEGATIVE_ANSWERS:
+        return None, 'medium'
+
+    # Prefer matching the keyword in the ANSWER (the actual signal) before
+    # falling back to label/question context. Yes/affirmative answers to
+    # topical Yes/No prompts still trigger via the label scan below.
+    affirmative = answer_low in {'yes', 'true', '1', 'agree'}
+    answer_blob = answer_low
+    label_blob = ' '.join((question_str, label_str))
+
     for key, issue_type, severity in ISSUE_KEYWORDS:
-        if key in blob:
+        if key in answer_blob:
             return issue_type, severity
-    if 'what should dala know' in blob or 'general feedback' in blob:
+    if affirmative:
+        for key, issue_type, severity in ISSUE_KEYWORDS:
+            if key in label_blob:
+                return issue_type, severity
+        return None, 'medium'
+
+    # Free-text answer (not yes/no): scan label/question for topical bucketing.
+    for key, issue_type, severity in ISSUE_KEYWORDS:
+        if key in label_blob:
+            return issue_type, severity
+    if 'what should dala know' in label_blob or 'general feedback' in label_blob:
         return 'general_feedback', 'low'
     return None, 'medium'
 
