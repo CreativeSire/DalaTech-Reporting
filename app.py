@@ -432,6 +432,21 @@ def _safe_name(brand_name):
     return brand_name.replace(' ', '_').replace("'", '').replace('/', '-')
 
 
+def _report_cache_tag(report):
+    """Unique on-disk cache tag per report.
+
+    Monthly reports keep the 'May2026' shape for backwards compatibility.
+    Weekly / biweekly / custom reports append the start_date so two reports
+    in the same month don't collide on the same cached PDF/HTML filename.
+    """
+    start_dt = datetime.strptime(report['start_date'], '%Y-%m-%d')
+    rtype = normalize_report_type((report or {}).get('report_type'))
+    base = start_dt.strftime('%b%Y')
+    if rtype == 'monthly':
+        return base
+    return f"{base}_{start_dt.strftime('%Y%m%d')}"
+
+
 def _brand_report_context(brand_name: str, cutoff_date: str | None = None) -> dict:
     history = list(reversed(ds.get_brand_history(brand_name, limit=36)))
     if cutoff_date:
@@ -1770,7 +1785,7 @@ def _run_generation(job_id, file_bytes, start_date, end_date, selected_brands, f
                 pass
 
         start_dt = datetime.strptime(start_date, '%Y-%m-%d')
-        month_tag = start_dt.strftime('%b%Y')
+        month_tag = _report_cache_tag({'start_date': start_date, 'report_type': report_type})
         brands_done = [
             {'brand': brand_name, 'pdf': False, 'html': False, 'error': None, 'deferred': not options.get('generate_artifacts')}
             for brand_name in brands
@@ -2961,7 +2976,7 @@ def generate():
     # Generate files
     ok_pdf = ok_html = 0
     errors = []
-    month_tag = datetime.strptime(start_date, '%Y-%m-%d').strftime('%b%Y')
+    month_tag = _report_cache_tag({'start_date': start_date, 'report_type': report_type})
     report_meta = ds.get_report(report_id) or {}
 
     for brand_name in brands:
@@ -3079,7 +3094,7 @@ def dashboard():
 
     # Portfolio dashboard HTML link
     start_dt = datetime.strptime(report['start_date'], '%Y-%m-%d')
-    month_tag = start_dt.strftime('%b%Y')
+    month_tag = _report_cache_tag(report)
     portfolio_file = f"PORTFOLIO_Dashboard_{month_tag}.html"
     portfolio_exists = os.path.isfile(os.path.join(HTML_DIR, portfolio_file))
 
@@ -3897,7 +3912,7 @@ def api_report_pdf(report_id, brand_name):
         abort(404)
 
     safe      = _safe_name(brand_name)
-    month_tag = datetime.strptime(report['start_date'], '%Y-%m-%d').strftime('%b%Y')
+    month_tag = _report_cache_tag(report)
     fname     = f"{safe}_Report_{month_tag}.pdf"
     disk_path = os.path.join(PDF_DIR, fname)
 
@@ -3964,7 +3979,7 @@ def api_report_pdf_bulk(report_id):
     if not brands:
         return jsonify({'error': 'No brands selected for bulk download.'}), 400
 
-    month_tag = datetime.strptime(report['start_date'], '%Y-%m-%d').strftime('%b%Y')
+    month_tag = _report_cache_tag(report)
     zip_name  = (f"Selected_Brand_Reports_{month_tag}.zip" if requested_brands
                  else f"All_Brand_Reports_{month_tag}.zip")
 
@@ -4026,7 +4041,7 @@ def api_portfolio_pdf(report_id):
     report = ds.get_report(report_id)
     if not report:
         abort(404)
-    month_tag = datetime.strptime(report['start_date'], '%Y-%m-%d').strftime('%b%Y')
+    month_tag = _report_cache_tag(report)
     html_path = os.path.join(HTML_DIR, f"PORTFOLIO_Dashboard_{month_tag}.html")
     if not os.path.isfile(html_path):
         return jsonify({'error': 'Portfolio HTML not yet generated. Run a full report generation first.'}), 404
