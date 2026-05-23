@@ -4186,10 +4186,16 @@ def api_retailer_group_report_pdf(group_slug):
 
 # ── Activity Report Generation ────────────────────────────────────────────────
 
+# Bump this whenever the activity report output format changes (template, builder,
+# narrative pipeline). It is appended to the cache filename so stale files from
+# prior versions are simply never read, and fresh ones get built on next request.
+ACTIVITY_REPORT_CACHE_VERSION = 'v2'
+
+
 def _activity_report_file_stem(brand_name, period_label):
     safe_brand = ''.join(c if c.isalnum() or c in '-_' else '_' for c in brand_name.replace(' ', '_'))
     period_safe = (period_label or 'Current_Period').replace(' ', '_').replace(',', '')
-    return f"{safe_brand}_Activity_Report_{period_safe}"
+    return f"{safe_brand}_Activity_Report_{period_safe}_{ACTIVITY_REPORT_CACHE_VERSION}"
 
 
 def _activity_batch_period_context(batch):
@@ -4255,7 +4261,7 @@ def _activity_report_cached_paths(brand_name, report=None, batch=None):
     }
 
 
-def _build_activity_report_assets(brand_name, report_id=None, batch_id=None):
+def _build_activity_report_assets(brand_name, report_id=None, batch_id=None, force_refresh=False):
     scope = _resolve_activity_scope(report_id=report_id, batch_id=batch_id)
     report = scope['report']
     batch = scope['batch']
@@ -4265,6 +4271,15 @@ def _build_activity_report_assets(brand_name, report_id=None, batch_id=None):
     if not context:
         raise ValueError('No activity context found')
     cached = _activity_report_cached_paths(brand_name, report=report, batch=batch)
+    if force_refresh and cached['cached']:
+        for key in ('pdf_path', 'html_path', 'excel_path'):
+            path = cached.get(key)
+            if path and os.path.isfile(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+        cached = _activity_report_cached_paths(brand_name, report=report, batch=batch)
     if cached['cached']:
         activity_summary = ds.get_activity_summary(report_id=report_id, batch_id=batch_id, brand_name=brand_name)
         return {
@@ -4543,17 +4558,18 @@ def _warm_activity_report_assets(report_id=None, batch_id=None, brand_names=None
 
 @app.route('/api/activity/report_html/<int:report_id>/<path:brand_name>')
 def api_activity_report_html(report_id, brand_name):
+    force = request.args.get('refresh') == '1'
     try:
         report = ds.get_report(report_id)
         cached = _activity_report_cached_paths(brand_name, report=report)
-        if cached['cached']:
+        if cached['cached'] and not force:
             return send_file(
                 cached['html_path'],
                 as_attachment=request.args.get('download') == '1',
                 download_name=os.path.basename(cached['html_path']) if request.args.get('download') == '1' else None,
                 mimetype='text/html'
             )
-        assets = _build_activity_report_assets(brand_name, report_id=report_id)
+        assets = _build_activity_report_assets(brand_name, report_id=report_id, force_refresh=force)
     except FileNotFoundError as exc:
         return jsonify({'error': str(exc)}), 404
     except Exception as exc:
@@ -4569,17 +4585,18 @@ def api_activity_report_html(report_id, brand_name):
 
 @app.route('/api/activity/report_pdf/<int:report_id>/<path:brand_name>')
 def api_activity_report_pdf(report_id, brand_name):
+    force = request.args.get('refresh') == '1'
     try:
         report = ds.get_report(report_id)
         cached = _activity_report_cached_paths(brand_name, report=report)
-        if cached['cached'] and cached['pdf_available']:
+        if cached['cached'] and cached['pdf_available'] and not force:
             return send_file(
                 cached['pdf_path'],
                 as_attachment=True,
                 download_name=os.path.basename(cached['pdf_path']),
                 mimetype='application/pdf'
             )
-        assets = _build_activity_report_assets(brand_name, report_id=report_id)
+        assets = _build_activity_report_assets(brand_name, report_id=report_id, force_refresh=force)
     except FileNotFoundError as exc:
         return jsonify({'error': str(exc)}), 404
     except Exception as exc:
@@ -4596,17 +4613,18 @@ def api_activity_report_pdf(report_id, brand_name):
 
 @app.route('/api/activity/report_excel/<int:report_id>/<path:brand_name>')
 def api_activity_report_excel(report_id, brand_name):
+    force = request.args.get('refresh') == '1'
     try:
         report = ds.get_report(report_id)
         cached = _activity_report_cached_paths(brand_name, report=report)
-        if cached['cached']:
+        if cached['cached'] and not force:
             return send_file(
                 cached['excel_path'],
                 as_attachment=True,
                 download_name=os.path.basename(cached['excel_path']),
                 mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
-        assets = _build_activity_report_assets(brand_name, report_id=report_id)
+        assets = _build_activity_report_assets(brand_name, report_id=report_id, force_refresh=force)
     except FileNotFoundError as exc:
         return jsonify({'error': str(exc)}), 404
     except Exception as exc:
@@ -4621,17 +4639,18 @@ def api_activity_report_excel(report_id, brand_name):
 
 @app.route('/api/activity/report_html_batch/<int:batch_id>/<path:brand_name>')
 def api_activity_report_html_batch(batch_id, brand_name):
+    force = request.args.get('refresh') == '1'
     try:
         batch = _get_activity_batch_row(batch_id)
         cached = _activity_report_cached_paths(brand_name, batch=batch)
-        if cached['cached']:
+        if cached['cached'] and not force:
             return send_file(
                 cached['html_path'],
                 as_attachment=request.args.get('download') == '1',
                 download_name=os.path.basename(cached['html_path']) if request.args.get('download') == '1' else None,
                 mimetype='text/html'
             )
-        assets = _build_activity_report_assets(brand_name, batch_id=batch_id)
+        assets = _build_activity_report_assets(brand_name, batch_id=batch_id, force_refresh=force)
     except FileNotFoundError as exc:
         return jsonify({'error': str(exc)}), 404
     except Exception as exc:
@@ -4647,17 +4666,18 @@ def api_activity_report_html_batch(batch_id, brand_name):
 
 @app.route('/api/activity/report_pdf_batch/<int:batch_id>/<path:brand_name>')
 def api_activity_report_pdf_batch(batch_id, brand_name):
+    force = request.args.get('refresh') == '1'
     try:
         batch = _get_activity_batch_row(batch_id)
         cached = _activity_report_cached_paths(brand_name, batch=batch)
-        if cached['cached'] and cached['pdf_available']:
+        if cached['cached'] and cached['pdf_available'] and not force:
             return send_file(
                 cached['pdf_path'],
                 as_attachment=True,
                 download_name=os.path.basename(cached['pdf_path']),
                 mimetype='application/pdf'
             )
-        assets = _build_activity_report_assets(brand_name, batch_id=batch_id)
+        assets = _build_activity_report_assets(brand_name, batch_id=batch_id, force_refresh=force)
     except FileNotFoundError as exc:
         return jsonify({'error': str(exc)}), 404
     except Exception as exc:
@@ -4674,17 +4694,18 @@ def api_activity_report_pdf_batch(batch_id, brand_name):
 
 @app.route('/api/activity/report_excel_batch/<int:batch_id>/<path:brand_name>')
 def api_activity_report_excel_batch(batch_id, brand_name):
+    force = request.args.get('refresh') == '1'
     try:
         batch = _get_activity_batch_row(batch_id)
         cached = _activity_report_cached_paths(brand_name, batch=batch)
-        if cached['cached']:
+        if cached['cached'] and not force:
             return send_file(
                 cached['excel_path'],
                 as_attachment=True,
                 download_name=os.path.basename(cached['excel_path']),
                 mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
-        assets = _build_activity_report_assets(brand_name, batch_id=batch_id)
+        assets = _build_activity_report_assets(brand_name, batch_id=batch_id, force_refresh=force)
     except FileNotFoundError as exc:
         return jsonify({'error': str(exc)}), 404
     except Exception as exc:
@@ -4701,8 +4722,9 @@ def api_activity_report(brand_name):
     """Generate on-demand activity report outputs for a brand."""
     report_id = request.args.get('report_id', type=int)
     batch_id = request.args.get('batch_id', type=int)
+    force = request.args.get('refresh') == '1'
     try:
-        assets = _build_activity_report_assets(brand_name, report_id=report_id, batch_id=batch_id)
+        assets = _build_activity_report_assets(brand_name, report_id=report_id, batch_id=batch_id, force_refresh=force)
     except FileNotFoundError:
         return jsonify({
             'error': f'No activity data found for {brand_name} in this period',
