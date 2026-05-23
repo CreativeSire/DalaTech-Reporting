@@ -382,7 +382,6 @@ def _build_kpi_cards(current, previous_metrics, trailing_metrics, source_quality
     previous = previous_metrics['current'] if previous_metrics else {}
     cards = [
         ('Stores Visited', current['stores_visited'], 'stores', 'stores_visited'),
-        ('Issues Found', current['issues_found'], 'logged issues', 'issues_found'),
         ('Opportunities Found', current['opportunities_found'], 'logged opportunities', 'opportunities_found'),
         ('Stores Photographed', current['images_captured'], 'stores with photo evidence', 'images_captured'),
         ('Cities Covered', current['cities_covered'], 'cities', 'cities_covered'),
@@ -717,6 +716,11 @@ def _build_narrative_payload(brand_name, period_label, date_range, current, issu
         for r in (store_breakdown.get('rows') or [])[:12]
     ]
     prev_current = previous_metrics['current'] if previous_metrics else {}
+    prev_issue_notes = []
+    if previous_metrics is not None:
+        prev_issues_df = previous_metrics.get('non_opportunity_issues')
+        if prev_issues_df is not None and hasattr(prev_issues_df, 'empty') and not prev_issues_df.empty:
+            prev_issue_notes = _collect_qualitative_samples(prev_issues_df, None, None, limit=6).get('issue_notes', [])
     return {
         'brand_name': brand_name,
         'period_label': period_label,
@@ -727,7 +731,7 @@ def _build_narrative_payload(brand_name, period_label, date_range, current, issu
             'activities_logged': current.get('activities_logged'),
             'issues_found': current.get('issues_found'),
             'opportunities_found': current.get('opportunities_found'),
-            'images_captured': current.get('images_captured'),
+            'stores_photographed': current.get('images_captured'),
             'states_covered': current.get('states_covered'),
             'cities_covered': current.get('cities_covered'),
             'brand_mentions': current.get('brand_mentions'),
@@ -736,6 +740,13 @@ def _build_narrative_payload(brand_name, period_label, date_range, current, issu
             'activities_pct': _calc_pct_change(current.get('activities_logged'), prev_current.get('activities_logged')),
             'issues_pct': _calc_pct_change(current.get('issues_found'), prev_current.get('issues_found')),
             'stores_pct': _calc_pct_change(current.get('stores_visited'), prev_current.get('stores_visited')),
+            'previous_metrics': {
+                'stores_visited': prev_current.get('stores_visited'),
+                'activities_logged': prev_current.get('activities_logged'),
+                'issues_found': prev_current.get('issues_found'),
+                'opportunities_found': prev_current.get('opportunities_found'),
+            } if previous_metrics else None,
+            'previous_issue_notes': prev_issue_notes,
         },
         'issue_mix': issue_mix[:10],
         'opportunity_mix': opportunity_mix[:10],

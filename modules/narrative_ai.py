@@ -331,7 +331,9 @@ def _build_activity_narrative_prompt(payload: dict) -> str:
     period = payload.get('period_label') or 'the current period'
     return f"""You are a senior field-operations analyst writing a weekly Field Activity report for {brand} ({period}).
 
-Use ONLY the structured evidence below. Reference real store names, SKUs, cities, and counts from the evidence. Do not invent numbers, stores, or SKUs. If evidence is thin, say so plainly.
+You are also the LAST line of defense before this report ships to the partner. Act as both the analyst AND the reviewer: cross-check every aggregate count against the qualitative notes before you write about it. The structured counts in `metrics` and `issue_mix` are upstream estimates and can be wrong. The `qualitative_samples.issue_notes` and `opportunity_notes` are the GROUND TRUTH — actual field-rep observations. If a count contradicts the notes (e.g. metrics say "5 expiry mentions" but no `issue_notes` actually describe an expiry incident), TRUST THE NOTES and downgrade or omit that claim. Never amplify thin evidence into a "hotspot" or "immediate focus".
+
+Memory: `change_vs_previous` shows trajectory vs last comparable period. Use it where meaningful (e.g. "activity is up 40% week-on-week", "OOS reports doubled vs last week"). Do not invent prior-period facts not in the payload.
 
 Tone: confident, specific, analytical. Write like a human analyst — never mention AI, models, prompts, automation, or data sources. No filler phrases ("it is worth noting", "in conclusion"). No emojis.
 
@@ -341,10 +343,10 @@ Return a single JSON object with EXACTLY these keys and shapes (no markdown, no 
   "paragraph": "A single 2-3 sentence executive paragraph leading the report.",
   "bullets": ["3 short executive-summary bullets, specific and quantified"],
   "what_stands_out": ["3 specific observations grounded in the data"],
-  "risks": ["3 concrete risks/concerns — name SKUs, stores, or expiry/OOS specifics where present"],
-  "opportunities": ["3 concrete upside signals — name SKUs, stores, or themes"],
+  "risks": ["3 concrete risks/concerns — only those actually supported by issue_notes. If fewer than 3 are supported, repeat or repurpose adjacent supported risks rather than fabricating new ones"],
+  "opportunities": ["3 concrete upside signals — only those actually supported by opportunity_notes or event_notes"],
   "do_now": [
-    {{"action": "Imperative sentence — what to do now", "why": "One-sentence rationale grounded in the evidence"}},
+    {{"action": "Imperative sentence — what to do now", "why": "One-sentence rationale citing a specific note or count"}},
     {{"action": "...", "why": "..."}},
     {{"action": "...", "why": "..."}}
   ],
@@ -358,12 +360,11 @@ Return a single JSON object with EXACTLY these keys and shapes (no markdown, no 
   ]
 }}
 
-Rules:
-- Every list MUST have the exact item count shown above. If evidence is thin, repurpose adjacent insights rather than padding with vague filler.
-- "do_now" items must be high-urgency and grounded in actual issues/expiry/OOS observed.
-- "watch" items are medium-urgency monitoring items.
-- "strategic" items are longer-horizon plays (distribution, assortment, pricing).
+Hard rules:
+- If `qualitative_samples.issue_notes` does NOT contain an expiry/OOS/packaging/competitor incident, do NOT raise that as a do_now item even if `issue_mix` lists it. Bucket it as `watch` at most, or skip it entirely.
+- "do_now" must be high-urgency and grounded in an actual note. If no notes support urgency, leave do_now items as monitoring-style ("Continue to monitor X across the field network") rather than alarmist.
 - Quote specific SKU names, store names, and cities from the evidence when relevant.
+- Numbers you mention must match the payload exactly.
 - No mention of "AI", "Gemini", "generated", "system", "this report", or the prompt itself.
 
 EVIDENCE:
