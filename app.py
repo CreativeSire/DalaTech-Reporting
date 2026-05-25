@@ -411,15 +411,19 @@ def money2_filter(value):
 
 # ── Admin Auth ────────────────────────────────────────────────────────────────
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
+REPORTING_INTEGRATION_KEY = os.environ.get('REPORTING_INTEGRATION_KEY', '')
 
 # Public paths that never require admin auth (login flow + brand partner portals + webhooks)
-_PUBLIC_PREFIXES = ('/login', '/logout', '/static', '/portal/', '/webhook/', '/api/reports', '/health')
+_PUBLIC_PREFIXES = ('/login', '/logout', '/static', '/portal/', '/webhook/', '/health')
 
 @app.before_request
 def _enforce_admin_auth():
     """Redirect to /login for protected routes when ADMIN_PASSWORD is set."""
     if not ADMIN_PASSWORD:
         return  # Auth disabled
+    supplied_key = request.headers.get('x-api-key') or request.headers.get('Authorization', '').replace('Bearer ', '', 1)
+    if REPORTING_INTEGRATION_KEY and supplied_key == REPORTING_INTEGRATION_KEY and request.path.startswith('/api/'):
+        return  # Trusted server-to-server integration
     if session.get('admin_authenticated'):
         return  # Already authenticated
     path = request.path
