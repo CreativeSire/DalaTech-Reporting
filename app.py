@@ -23,6 +23,8 @@ Routes:
 """
 
 import os, io, json, traceback, shutil, uuid, threading, tempfile, zipfile, hashlib
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
 from datetime import datetime
@@ -412,6 +414,7 @@ def money2_filter(value):
 # ── Admin Auth ────────────────────────────────────────────────────────────────
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
 REPORTING_INTEGRATION_KEY = os.environ.get('REPORTING_INTEGRATION_KEY', '')
+DALA_WEBSITE_API_BASE_URL = os.environ.get('DALA_WEBSITE_API_BASE_URL', 'https://dala-api-production-e6ed.up.railway.app').rstrip('/')
 
 # Public paths that never require admin auth (login flow + brand partner portals + webhooks)
 _PUBLIC_PREFIXES = ('/login', '/logout', '/static', '/portal/', '/webhook/', '/health')
@@ -3138,6 +3141,49 @@ def dashboard():
                            conc_warning=conc_warning,
                            churn_summary=churn_summary,
                            total_churned=total_churned)
+
+
+@app.route('/api/push-to-website/<int:report_id>', methods=['POST'])
+def api_push_to_website(report_id):
+    """Push one sales report period into the DALA CRM review queue."""
+    if not REPORTING_INTEGRATION_KEY:
+        return jsonify({'success': False, 'error': 'REPORTING_INTEGRATION_KEY is not configured.'}), 503
+
+    payload = json.dumps({
+        'reportId': report_id,
+        'status': 'review',
+        'limit': 1,
+    }).encode('utf-8')
+    req = urllib.request.Request(
+        f"{DALA_WEBSITE_API_BASE_URL}/api/integrations/reporting-sync",
+        data=payload,
+        method='POST',
+        headers={
+            'Content-Type': 'application/json',
+            'x-api-key': REPORTING_INTEGRATION_KEY,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as response:
+            result = json.loads(response.read().decode('utf-8') or '{}')
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode('utf-8', errors='replace')
+        try:
+            parsed = json.loads(body)
+        except Exception:
+            parsed = {'error': body}
+        return jsonify({'success': False, 'status': exc.code, **parsed}), exc.code
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 502
+
+    if 'text/html' in request.headers.get('accept', '').lower():
+        return redirect(url_for(
+            'dashboard',
+            report_id=report_id,
+            pushed='1',
+            imported=result.get('importedCount', 0),
+        ))
+    return jsonify(result)
 
 
 # ── Brands list ───────────────────────────────────────────────────────────────

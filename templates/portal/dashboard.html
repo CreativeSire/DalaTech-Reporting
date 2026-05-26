@@ -21,6 +21,9 @@
 </select>
 <a href="/api/export/brands?report_id={{ report.id }}" class="btn btn-outline btn-sm" title="Export CSV">⬇ CSV</a>
 <a href="/brands?report_id={{ report.id }}" class="btn btn-outline btn-sm">Bulk PDFs</a>
+<form method="post" action="/api/push-to-website/{{ report.id }}" style="display:inline-flex;margin:0;">
+  <button type="submit" class="btn btn-primary btn-sm">Push to Website</button>
+</form>
 {% endif %}
 {% if portfolio_file %}
 <a href="/download/html/{{ portfolio_file }}" target="_blank" class="btn btn-primary btn-sm">Portfolio HTML</a>
@@ -34,6 +37,12 @@
   <p style="font-size:18px;color:var(--muted);">No reports yet. <a href="/">Upload your first Tally file.</a></p>
 </div>
 {% else %}
+{% if request.args.get('pushed') %}
+<div class="card" style="margin-bottom:16px;border-left:4px solid var(--green);">
+  <strong>Sent to DALA CRM.</strong>
+  {{ request.args.get('imported', '0') }} brand snapshot(s) were pushed into review. Admins can approve or publish them inside CRM Reports.
+</div>
+{% endif %}
 
 <!-- KPI SUMMARY -->
 <div class="grid-4" style="margin-bottom:24px;">
