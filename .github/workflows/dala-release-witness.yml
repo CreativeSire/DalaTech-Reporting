@@ -1,0 +1,21 @@
+name: DALA Release Witness
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-release:
+    name: Record exact source release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Record from the canonical DALA mapping
+        uses: Dalatech-HQ/DALA_CIS/.github/actions/dala-release-witness@main
+        with:
+          sentry-auth-token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          previous-sha: ${{ github.event.before }}
